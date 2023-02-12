@@ -1,0 +1,157 @@
+---
+Description: API service with serverless architecture to give push notification for stocks
+
+Parameters:
+  Version:
+    Description: Application version number
+    Type: String
+
+  BucketName:
+    Description: S3 bucket name where the source code lives
+    Type: String
+
+Resources:
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        S3Bucket: !Ref BucketName
+        S3Key: !Sub lambda-source-code/requestLambda-${Version}.zip
+      Handler: index.main
+      Description: Request lambda
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.9
+      Timeout: 10
+
+  LambdaExecutionRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "lambda.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: "LambdaFunctionPolicy"
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+              Resource: "*"
+        - PolicyName: "DynamoDBPolicy"
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:DeleteItem
+                - dynamodb:Scan
+              Resource: "*"
+        - PolicyName: "S3Policy"
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+                - s3:Put*
+                - s3:Get*
+                - s3:Describe*
+              Resource: "*"
+        - PolicyName: "Publisher"
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+                - sns:Publish
+                - ses:SendEmail"
+                - ses:SendRawEmail
+              Resource: "*"
+        - PolicyName: "Events"
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+                - events:EnableRule
+                - events:DisableRule
+              Resource: "*"
+
+  StartEvent:
+    Type: AWS::Events::Rule
+    Properties: 
+      Description: Start the execution of the lambda to get API
+      State: ENABLED
+      Name: StartLambdaEvent
+      ScheduleExpression: "cron(15 13 ? * MON-FRI *)"
+      Targets:
+        - Id: StartEvent
+          Arn: !GetAtt
+            - LambdaFunction
+            - Arn
+  StartEventPermission:
+    Type: AWS::Lambda::Permission
+    Properties: 
+      FunctionName: !Ref "LambdaFunction"
+      Action: "lambda:InvokeFunction"
+      Principal: "events.amazonaws.com"
+      SourceArn: 
+        Fn::GetAtt: 
+          - "StartEvent"
+          - "Arn"
+
+  ExecuteEvent:
+    Type: AWS::Events::Rule
+    Properties: 
+      Description: Trigger the lambda to get API
+      State: DISABLED
+      Name: ExecuteLambdaEvent
+      ScheduleExpression: "cron(0/30 * ? * MON-FRI *)"
+      Targets: 
+        - Id: ExecuteEvent
+          Arn: !GetAtt
+            - LambdaFunction
+            - Arn
+  ExecuteEventPermission:
+    Type: AWS::Lambda::Permission
+    Properties: 
+      FunctionName: !Ref "LambdaFunction"
+      Action: "lambda:InvokeFunction"
+      Principal: "events.amazonaws.com"
+      SourceArn: 
+        Fn::GetAtt: 
+          - "ExecuteEvent"
+          - "Arn"
+
+  StopEvent:
+    Type: AWS::Events::Rule
+    Properties: 
+      Description: Stop the execution of the lambda to get API
+      State: ENABLED
+      Name: StopLambdaEvent
+      ScheduleExpression: "cron(15 20 ? * MON-FRI *)"
+      Targets: 
+        - Id: StopEvent
+          Arn: !GetAtt
+            - LambdaFunction
+            - Arn
+  StopEventPermission: 
+      Type: AWS::Lambda::Permission
+      Properties: 
+        FunctionName: !Ref "LambdaFunction"
+        Action: "lambda:InvokeFunction"
+        Principal: "events.amazonaws.com"
+        SourceArn: 
+          Fn::GetAtt: 
+            - "StopEvent"
+            - "Arn"
