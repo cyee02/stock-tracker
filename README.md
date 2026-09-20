@@ -27,9 +27,16 @@ To revoke *everything*, including your own sessions, rotate `ADMIN_KEY` and revo
 ```
 backend/   FastAPI app (yfinance data, bands, SQLite share links) + pytest tests
 frontend/  React + TypeScript + Vite, Plotly chart
+scripts/   dev.sh — one-command local setup and run
+.claude/   Claude Code config: the pr-readme skill and the hook that enforces it
 Dockerfile Single container: builds the frontend and serves it from FastAPI
 fly.toml   Fly.io deployment config
 ```
+
+Before opening a pull request, README.md gets updated to match the branch. A
+PreToolUse hook (`.claude/hooks/pr-readme-guard.sh`) stops `gh pr create` when
+the branch has no README change; prefix the command with `PR_README_OK=1` when
+no change is genuinely needed.
 
 ## Local development
 
