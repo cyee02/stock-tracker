@@ -33,6 +33,16 @@ fly.toml   Fly.io deployment config
 
 ## Local development
 
+Quick start — builds anything missing, generates an admin key on first run, and serves both the API and the UI on http://localhost:8000:
+
+```bash
+./scripts/dev.sh
+```
+
+It prints the URL to open (it includes your local admin key, kept in the gitignored `.admin_key`). Share links created locally live in `local.db`.
+
+### Running the pieces by hand
+
 Backend (Python 3.11+):
 
 ```bash

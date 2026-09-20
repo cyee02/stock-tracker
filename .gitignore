@@ -8,3 +8,7 @@ frontend/dist/
 *.db
 .env
 .DS_Store
+
+# local dev
+.admin_key
+local.db
