@@ -1,0 +1,31 @@
+# Replace `app` with your own unique Fly app name (or let `fly launch` rewrite it).
+app = "stock-tracker-cyee02"
+primary_region = "sin"
+
+[build]
+
+[env]
+  DB_PATH = "/data/app.db"
+  CACHE_TTL_SECONDS = "3600"
+
+[mounts]
+  source = "data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    path = "/healthz"
+    timeout = "5s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
