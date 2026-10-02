@@ -12,17 +12,20 @@ export default function App() {
   const [state, setState] = useState<State>({ kind: "loading" });
   const isAdminRoute = window.location.pathname.replace(/\/+$/, "") === "/admin";
 
+  // Always ask the server who we are. Behind Tailscale there is no token to
+  // check locally -- the tailnet identifies us -- so only the server can say.
   const refresh = () => {
-    if (!getToken()) {
-      setState({ kind: "denied", message: "You need an access link to use this site." });
-      return;
-    }
+    const hadToken = getToken() !== null;
     api
       .me()
       .then((me) => setState({ kind: "ok", me }))
       .catch((e) => {
-        if (e instanceof ApiError && e.status === 401) clearToken();
-        setState({ kind: "denied", message: e.message });
+        const unauthorized = e instanceof ApiError && e.status === 401;
+        if (unauthorized) clearToken();
+        setState({
+          kind: "denied",
+          message: unauthorized && !hadToken ? "You need an access link to use this site." : e.message,
+        });
       });
   };
 
