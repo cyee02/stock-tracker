@@ -10,6 +10,8 @@ For a ticker and a moving-average window (3m, 6m, 1y, 3y, 5y or 10y), it plots:
 
 Each date uses only the closes up to that date, so there's no look-ahead. Hover over the chart to see all four values for a date. The badge shows where the latest close sits: below p25 → *Underpriced*, above p75 → *Overpriced*, otherwise *Within range*.
 
+Above the chart, an overview card shows the ticker's name, type and description from Yahoo, its NAV (ETFs report one; for mutual funds the quoted price is the NAV), and YTD / 1Y / 5Y / 10Y total returns (5Y and 10Y also annualized). Returns are measured from the last close on or before each period's start and include dividends, because they use the adjusted close. A period shows "—" when the history doesn't go back far enough.
+
 Windows are measured in trading days: 3m = 63, 6m = 126, 1y = 252, 3y = 756, 5y = 1260, 10y = 2520.
 
 ## Access control

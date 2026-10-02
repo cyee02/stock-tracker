@@ -1,6 +1,7 @@
+import math
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pandas as pd
 import yfinance as yf
@@ -21,9 +22,45 @@ class TickerNotFound(Exception):
 
 
 @dataclass
+class TickerInfo:
+    name: str | None = None
+    quote_type: str | None = None
+    description: str | None = None
+    nav: float | None = None
+
+
+@dataclass
 class History:
     close: pd.Series
     currency: str | None
+    info: TickerInfo = field(default_factory=TickerInfo)
+
+
+def _float(x) -> float | None:
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return None
+    return None if math.isnan(v) else v
+
+
+def download_info(t: yf.Ticker) -> TickerInfo:
+    """Name, description and NAV. Best effort: Yahoo's quote summary is flaky."""
+    try:
+        info = t.info or {}
+    except Exception:
+        return TickerInfo()
+    quote_type = info.get("quoteType")
+    nav = _float(info.get("navPrice"))
+    if nav is None and quote_type == "MUTUALFUND":
+        # Mutual funds trade at NAV, so the quoted price is the NAV.
+        nav = _float(info.get("regularMarketPrice")) or _float(info.get("previousClose"))
+    return TickerInfo(
+        name=info.get("longName") or info.get("shortName"),
+        quote_type=quote_type,
+        description=info.get("longBusinessSummary") or info.get("description"),
+        nav=nav,
+    )
 
 
 def download_history(ticker: str) -> History:
@@ -40,7 +77,7 @@ def download_history(ticker: str) -> History:
         currency = t.history_metadata.get("currency")
     except Exception:
         pass
-    return History(close=close, currency=currency)
+    return History(close=close, currency=currency, info=download_info(t))
 
 
 class HistoryCache:
@@ -84,3 +121,31 @@ def classify(close: float, p25: float, p75: float) -> str:
     if close > p75:
         return "overpriced"
     return "fair"
+
+
+# (label, years back); YTD is measured from the prior year's last close.
+RETURN_PERIODS: list[tuple[str, int | None]] = [("YTD", None), ("1Y", 1), ("5Y", 5), ("10Y", 10)]
+
+
+def compute_returns(close: pd.Series) -> list[dict]:
+    """Price change from the last close on or before each period's start date.
+
+    `close` is dividend-adjusted, so these are total returns. A period is None
+    when the history doesn't reach back to its start date.
+    """
+    last_date = close.index[-1]
+    last = close.iloc[-1]
+    out = []
+    for label, years in RETURN_PERIODS:
+        if years is None:
+            start = pd.Timestamp(last_date.year - 1, 12, 31)
+        else:
+            start = last_date - pd.DateOffset(years=years)
+        base = close.loc[:start]
+        total = annualized = None
+        if not base.empty and base.iloc[-1] > 0:
+            total = float(last / base.iloc[-1] - 1)
+            if years and years > 1:
+                annualized = float((1 + total) ** (1 / years) - 1)
+        out.append({"period": label, "total": total, "annualized": annualized})
+    return out

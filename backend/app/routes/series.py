@@ -3,7 +3,7 @@ import math
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.auth import Viewer, require_viewer
-from app.market import PERIOD_WINDOWS, TickerNotFound, classify, compute_bands
+from app.market import PERIOD_WINDOWS, TickerNotFound, classify, compute_bands, compute_returns
 
 router = APIRouter(prefix="/api")
 
@@ -55,9 +55,20 @@ def series(
         for idx, row in zip(df.index, df.itertuples(index=False))
     ]
     last = points[-1]
+    info = history.info
     return {
         "ticker": ticker,
         "currency": history.currency,
+        "info": {
+            "name": info.name,
+            "quote_type": info.quote_type,
+            "description": info.description,
+            "nav": _num(info.nav),
+        },
+        "returns": [
+            {**r, "total": _num(r["total"]), "annualized": _num(r["annualized"])}
+            for r in compute_returns(close)
+        ],
         "period": period,
         "window": window,
         "points": points,

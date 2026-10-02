@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from app.market import classify, compute_bands
+from app.market import classify, compute_bands, compute_returns
 
 
 @pytest.fixture
@@ -41,3 +41,30 @@ def test_no_look_ahead(close):
 )
 def test_classify(price, expected):
     assert classify(price, 10, 20) == expected
+
+
+def _by_period(close):
+    return {r["period"]: r for r in compute_returns(close)}
+
+
+def test_returns_use_last_close_on_or_before_start():
+    idx = pd.bdate_range("2014-06-02", "2025-06-30")
+    close = pd.Series(np.arange(1, len(idx) + 1, dtype=float), index=idx)
+    r = _by_period(close)
+    last = close.iloc[-1]
+    assert r["YTD"]["total"] == pytest.approx(last / close.loc[:"2024-12-31"].iloc[-1] - 1)
+    assert r["1Y"]["total"] == pytest.approx(last / close.loc[:"2024-06-30"].iloc[-1] - 1)
+    five = last / close.loc[:"2020-06-30"].iloc[-1] - 1
+    assert r["5Y"]["total"] == pytest.approx(five)
+    assert r["5Y"]["annualized"] == pytest.approx((1 + five) ** (1 / 5) - 1)
+    assert r["10Y"]["total"] == pytest.approx(last / close.loc[:"2015-06-30"].iloc[-1] - 1)
+    assert r["YTD"]["annualized"] is None and r["1Y"]["annualized"] is None
+
+
+def test_returns_none_when_history_too_short(close):
+    # fixture spans 2020-01-01 .. 2021-02-23: covers YTD and 1Y, not 5Y/10Y
+    r = _by_period(close)
+    assert r["YTD"]["total"] is not None
+    assert r["1Y"]["total"] is not None
+    assert r["5Y"] == {"period": "5Y", "total": None, "annualized": None}
+    assert r["10Y"]["total"] is None

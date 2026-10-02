@@ -3,6 +3,7 @@ import { api, Period, PERIODS, SeriesResponse } from "../api";
 import BandChart from "../components/BandChart";
 import SignalBadge from "../components/SignalBadge";
 import TickerForm from "../components/TickerForm";
+import TickerOverview from "../components/TickerOverview";
 
 function readQuery(): { ticker: string; period: Period } {
   const q = new URLSearchParams(window.location.search);
@@ -50,6 +51,7 @@ export default function ChartPage() {
       {error && <div className="card error">{error}</div>}
       {data && (
         <>
+          <TickerOverview data={data} />
           <SignalBadge data={data} />
           <div className={`card chart-card${loading ? " stale" : ""}`}>
             <div className="chart-toolbar">

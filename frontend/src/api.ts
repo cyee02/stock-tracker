@@ -12,9 +12,24 @@ export interface Point {
   p75: number | null;
 }
 
+export interface TickerInfo {
+  name: string | null;
+  quote_type: string | null;
+  description: string | null;
+  nav: number | null;
+}
+
+export interface PeriodReturn {
+  period: "YTD" | "1Y" | "5Y" | "10Y";
+  total: number | null;
+  annualized: number | null;
+}
+
 export interface SeriesResponse {
   ticker: string;
   currency: string | null;
+  info: TickerInfo;
+  returns: PeriodReturn[];
   period: Period;
   window: number;
   points: Point[];
