@@ -16,18 +16,35 @@ Windows are measured in trading days: 3m = 63, 6m = 126, 1y = 252, 3y = 756, 5y 
 
 The site is locked down. Every `/api` call needs a token.
 
+There are two ways to prove who you are, and you can run either alone or both together.
+
+**1. Tailnet identity (no key).** When `TAILSCALE_AUTH=1`, the app trusts the
+`Tailscale-User-Login` header that `tailscale serve` attaches to each request,
+and treats that user as the owner. Nothing to type, nothing to leak, nothing to
+rotate. Set `TAILSCALE_ALLOWED_LOGINS` to a comma-separated list of logins to
+restrict which tailnet users get in; leave it unset to allow any of them, which
+is only appropriate on a tailnet where you are the sole user.
+
+The header is only honoured when the request arrives over loopback and carries
+no `Tailscale-Funnel-Request` header. That makes `scripts/tailscale.sh` the
+supported way to run it — see [Serve it on your tailnet](#serve-it-on-your-tailnet).
+
+**2. Bearer tokens.** Needed whenever the caller is not on your tailnet.
+
 - **You (owner)**: the `ADMIN_KEY` env var. Open `https://<your-app>/?t=<ADMIN_KEY>` once. The token moves into the browser's localStorage and is removed from the address bar.
 - **People you share with**: open `/admin`, type a name, click **Create link**, and send them the URL. It's shown only once because only a hash is stored. Each person has their own link. **Revoke** cuts off that person immediately, and the table shows when each link was last used.
 - Anyone without a valid token sees "Access required".
 
-To revoke *everything*, including your own sessions, rotate `ADMIN_KEY` and revoke all links.
+`ADMIN_KEY` is optional when `TAILSCALE_AUTH=1`; otherwise it is required and
+must be at least 16 characters. To revoke *everything*, including your own
+sessions, rotate `ADMIN_KEY` and revoke all links.
 
 ## Project layout
 
 ```
 backend/   FastAPI app (yfinance data, bands, SQLite share links) + pytest tests
 frontend/  React + TypeScript + Vite, Plotly chart
-scripts/   dev.sh — one-command local setup and run
+scripts/   dev.sh — local setup and run; tailscale.sh — serve to your tailnet
 .claude/   Claude Code config: the pr-readme skill and the hook that enforces it
 Dockerfile Single container: builds the frontend and serves it from FastAPI
 fly.toml   Fly.io deployment config
@@ -71,6 +88,33 @@ npm run dev
 Then open `http://localhost:5173/?t=local-dev-admin-key-123456`.
 
 To serve the production build from FastAPI instead, run `npm run build`. The backend serves `frontend/dist` automatically at `http://localhost:8000`.
+
+## Serve it on your tailnet
+
+The cheapest way to reach this from anywhere, and the one with no public attack
+surface. Requires [Tailscale](https://tailscale.com/download) installed and
+`tailscale up` run on this machine.
+
+```bash
+./scripts/tailscale.sh
+```
+
+It builds what's missing, publishes the app at `https://<machine>.<tailnet>.ts.net`,
+and prints the URL. Only devices signed in to your tailnet can reach it, and no
+access key is involved. Stopping the script removes the endpoint.
+
+Restrict access to specific tailnet users (worth doing if anyone else is on the
+tailnet):
+
+```bash
+TAILSCALE_ALLOWED_LOGINS="you@example.com" ./scripts/tailscale.sh
+```
+
+Notes and caveats:
+
+- Your machine has to be awake and online. On a Mac, `caffeinate -s ./scripts/tailscale.sh` keeps it from sleeping while serving.
+- The identity headers are trusted because uvicorn binds to `127.0.0.1` and Tailscale is the only way in. **Do not** change the script to bind `0.0.0.0`, and do not add `--proxy-headers`/`--forwarded-allow-ips` to it: with those, the peer address comes from a caller-supplied `X-Forwarded-For` and the check in `backend/app/auth.py` can be fooled.
+- **Never run `tailscale funnel` on this app** while relying on tailnet identity. Funnel publishes the endpoint to the public internet. Requests arriving that way are refused rather than trusted, but you'd be exposing the service deliberately — use `ADMIN_KEY` instead if you want that.
 
 ## Deploy to Fly.io
 
