@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.main import create_app
-from app.market import History, NewsItem, TickerInfo, download_news, next_earnings, parse_news_item
+from app.market import History, NewsItem, TickerInfo, TTLCache, download_news, next_earnings, parse_news_item
 
 ADMIN = "admin-key-for-tests-0123456789"
 AUTH = {"Authorization": f"Bearer {ADMIN}"}
@@ -93,6 +93,54 @@ def test_download_news_sorts_newest_first(monkeypatch):
     monkeypatch.setattr("app.market.yf.Ticker", FakeTicker)
     titles = [n.title for n in download_news("AAPL")]
     assert titles == ["Apple beats estimates", "Old style headline"]
+
+
+def test_download_news_falls_back_to_search_when_stream_is_empty(monkeypatch):
+    class FakeTicker:
+        def __init__(self, ticker):
+            pass
+
+        def get_news(self, count):
+            return []
+
+    class FakeSearch:
+        def __init__(self, query, max_results, news_count):
+            assert query == "AAPL"
+            self.news = [OLD_FORMAT]
+
+    monkeypatch.setattr("app.market.yf.Ticker", FakeTicker)
+    monkeypatch.setattr("app.market.yf.Search", FakeSearch)
+    assert [n.title for n in download_news("AAPL")] == ["Old style headline"]
+
+
+def test_download_news_falls_back_when_stream_raises(monkeypatch):
+    class FakeTicker:
+        def __init__(self, ticker):
+            pass
+
+        def get_news(self, count):
+            raise ValueError("bad json")
+
+    class FakeSearch:
+        def __init__(self, query, max_results, news_count):
+            self.news = [NEW_FORMAT]
+
+    monkeypatch.setattr("app.market.yf.Ticker", FakeTicker)
+    monkeypatch.setattr("app.market.yf.Search", FakeSearch)
+    assert [n.title for n in download_news("AAPL")] == ["Apple beats estimates"]
+
+
+def test_empty_news_is_not_cached():
+    calls = []
+
+    def loader(ticker):
+        calls.append(ticker)
+        return []
+
+    cache = TTLCache(60, loader)
+    cache.get("AAPL")
+    cache.get("AAPL")
+    assert calls == ["AAPL", "AAPL"]
 
 
 @pytest.fixture

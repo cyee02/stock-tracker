@@ -1,4 +1,5 @@
 import datetime as dt
+import logging
 import math
 import threading
 import time
@@ -6,6 +7,8 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 import yfinance as yf
+
+log = logging.getLogger(__name__)
 
 # Approximate trading days per period.
 PERIOD_WINDOWS: dict[str, int] = {
@@ -184,9 +187,34 @@ def parse_news_item(raw: dict) -> NewsItem | None:
     return NewsItem(title=title, url=link, publisher=publisher, published_at=published, summary=summary or None, thumbnail=thumb)
 
 
+def _parse_all(raw) -> list[NewsItem]:
+    return [n for n in (parse_news_item(r) for r in raw or [] if isinstance(r, dict)) if n]
+
+
 def download_news(ticker: str, count: int = 20) -> list[NewsItem]:
-    raw = yf.Ticker(ticker).get_news(count=count) or []
-    items = [n for n in (parse_news_item(r) for r in raw if isinstance(r, dict)) if n]
+    """Latest headlines for `ticker`, newest first.
+
+    `Ticker.get_news` hits Yahoo's quote-page news stream. yfinance swallows
+    its errors and returns [] when Yahoo answers with something unexpected, so
+    an empty result falls back to Yahoo's search endpoint, which carries news
+    for the symbol in the older flat format.
+    """
+    raw = []
+    try:
+        raw = yf.Ticker(ticker).get_news(count=count) or []
+    except Exception as exc:
+        log.warning("news stream failed for %s: %s", ticker, exc)
+    items = _parse_all(raw)
+    if not items:
+        if raw:
+            log.warning("news stream for %s had %d entries but none parsed; first keys: %s",
+                        ticker, len(raw), sorted(raw[0]) if isinstance(raw[0], dict) else type(raw[0]))
+        try:
+            fallback = yf.Search(ticker, max_results=0, news_count=count).news
+        except Exception as exc:
+            log.warning("news search failed for %s: %s", ticker, exc)
+            fallback = []
+        items = _parse_all(fallback)
     epoch = dt.datetime.min.replace(tzinfo=dt.timezone.utc)
     return sorted(items, key=lambda n: n.published_at or epoch, reverse=True)
 
@@ -207,8 +235,11 @@ class TTLCache:
             if hit and now - hit[0] < self.ttl:
                 return hit[1]
         value = self.loader(ticker)
-        with self._lock:
-            self._data[ticker] = (now, value)
+        # An empty answer is more likely a Yahoo hiccup than the truth, so
+        # don't let it stick for the whole TTL.
+        if value or not isinstance(value, list):
+            with self._lock:
+                self._data[ticker] = (now, value)
         return value
 
 
