@@ -6,16 +6,17 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import Settings, get_settings
 from app.db import Database
-from app.market import HistoryCache, download_history
+from app.market import HistoryCache, TTLCache, download_history, download_news
 from app.routes import admin, series
 
 
-def create_app(settings: Settings | None = None, loader=download_history) -> FastAPI:
+def create_app(settings: Settings | None = None, loader=download_history, news_loader=download_news) -> FastAPI:
     settings = settings or get_settings()
     app = FastAPI(title="Stock Tracker", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.settings = settings
     app.state.db = Database(settings.db_path)
     app.state.history = HistoryCache(settings.cache_ttl_seconds, loader)
+    app.state.news = TTLCache(settings.cache_ttl_seconds, news_loader)
 
     @app.get("/healthz")
     def healthz():

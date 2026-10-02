@@ -12,6 +12,10 @@ def _num(x: float) -> float | None:
     return None if x is None or math.isnan(x) else round(float(x), 4)
 
 
+def _iso(d) -> str | None:
+    return d.isoformat() if d else None
+
+
 @router.get("/me")
 def me(viewer: Viewer = Depends(require_viewer)):
     return {"role": viewer.role, "name": viewer.name}
@@ -64,6 +68,8 @@ def series(
             "quote_type": info.quote_type,
             "description": info.description,
             "nav": _num(info.nav),
+            "earnings_date": _iso(info.earnings_date),
+            "earnings_date_end": _iso(info.earnings_date_end),
         },
         "returns": [
             {**r, "total": _num(r["total"]), "annualized": _num(r["annualized"])}
@@ -73,4 +79,31 @@ def series(
         "window": window,
         "points": points,
         "latest": {**last, "signal": classify(last["close"], last["p25"], last["p75"])},
+    }
+
+
+@router.get("/news")
+def news(
+    request: Request,
+    ticker: str = Query(..., min_length=1, max_length=20),
+    _: Viewer = Depends(require_viewer),
+):
+    ticker = ticker.strip().upper()
+    try:
+        items = request.app.state.news.get(ticker)
+    except Exception as exc:  # network errors, Yahoo rate limiting, etc.
+        raise HTTPException(502, f"Could not fetch news from Yahoo Finance: {exc}")
+    return {
+        "ticker": ticker,
+        "items": [
+            {
+                "title": n.title,
+                "url": n.url,
+                "publisher": n.publisher,
+                "published_at": _iso(n.published_at),
+                "summary": n.summary,
+                "thumbnail": n.thumbnail,
+            }
+            for n in items
+        ],
     }

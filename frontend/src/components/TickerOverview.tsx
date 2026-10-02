@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { SeriesResponse } from "../api";
-import { formatPercent, formatPrice } from "../format";
+import { daysUntil, formatDay, formatPercent, formatPrice } from "../format";
 
 const TYPE_LABELS: Record<string, string> = {
   EQUITY: "Stock",
@@ -27,11 +27,14 @@ export default function TickerOverview({ data }: { data: SeriesResponse }) {
           {info.name ?? data.ticker} <span className="muted">· {data.ticker}</span>
           {type && <span className="type-tag">{type}</span>}
         </h2>
-        {info.nav !== null && (
-          <span className="nav muted">
-            NAV <strong>{formatPrice(info.nav, currency)}</strong>
-          </span>
-        )}
+        <div className="overview-facts">
+          {info.earnings_date && <EarningsDate start={info.earnings_date} end={info.earnings_date_end} />}
+          {info.nav !== null && (
+            <span className="nav muted">
+              NAV <strong>{formatPrice(info.nav, currency)}</strong>
+            </span>
+          )}
+        </div>
       </div>
       {info.description && (
         <>
@@ -55,5 +58,20 @@ export default function TickerOverview({ data }: { data: SeriesResponse }) {
         ))}
       </dl>
     </div>
+  );
+}
+
+function EarningsDate({ start, end }: { start: string; end: string | null }) {
+  const days = daysUntil(start);
+  const when = days === 0 ? "today" : days === 1 ? "tomorrow" : `in ${days} days`;
+  const label = end ? `${formatDay(start, false)} – ${formatDay(end)}` : formatDay(start);
+  return (
+    <span
+      className="nav muted"
+      title={end ? "Estimated: the company hasn't confirmed the exact date yet" : "Confirmed date"}
+    >
+      Next earnings <strong>{label}</strong> ({end ? "est., " : ""}
+      {when})
+    </span>
   );
 }
