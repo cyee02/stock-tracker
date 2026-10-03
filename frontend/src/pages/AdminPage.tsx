@@ -64,7 +64,7 @@ export default function AdminPage({ me, onAuthChange }: Props) {
     <div className="shell">
       <header className="topbar">
         <a href="/" className="brand">
-          Mean Reversion Tracker
+          Stock Tracker
         </a>
         <span className="who">Share links</span>
       </header>

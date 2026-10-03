@@ -10,6 +10,15 @@ export interface Point {
   ma: number | null;
   p25: number | null;
   p75: number | null;
+  sma50: number | null;
+  sma200: number | null;
+}
+
+export type Trend = "bullish" | "bearish";
+
+export interface SmaCross {
+  date: string;
+  kind: "golden" | "death";
 }
 
 export interface TickerInfo {
@@ -35,7 +44,8 @@ export interface SeriesResponse {
   period: Period;
   window: number;
   points: Point[];
-  latest: Point & { signal: Signal };
+  latest: Point & { signal: Signal; trend: Trend | null };
+  sma: { fast: number; slow: number; crosses: SmaCross[] };
 }
 
 export interface NewsItem {

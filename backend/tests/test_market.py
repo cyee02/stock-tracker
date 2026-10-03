@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from app.market import classify, compute_bands, compute_returns
+from app.market import classify, compute_bands, compute_returns, compute_smas, find_crosses, sma_trend
 
 
 @pytest.fixture
@@ -68,3 +68,34 @@ def test_returns_none_when_history_too_short(close):
     assert r["1Y"]["total"] is not None
     assert r["5Y"] == {"period": "5Y", "total": None, "annualized": None}
     assert r["10Y"]["total"] is None
+
+
+def test_smas_match_trailing_mean(close):
+    df = compute_smas(close)
+    assert df["sma_fast"].iloc[:49].isna().all()
+    assert df["sma_slow"].iloc[:199].isna().all()
+    assert df["sma_fast"].iloc[120] == pytest.approx(close.iloc[71:121].mean())
+    assert df["sma_slow"].iloc[250] == pytest.approx(close.iloc[51:251].mean())
+
+
+def test_find_crosses_golden_and_death():
+    idx = pd.bdate_range("2024-01-01", periods=7)
+    fast = pd.Series([float("nan"), 1, 2, 3, 3, 2, 1], index=idx)
+    slow = pd.Series([float("nan"), 2, 2, 2, 3, 3, 3], index=idx)
+    # below -> touch (no cross) -> above -> touch -> below
+    crosses = find_crosses(fast, slow)
+    assert [(c["date"], c["kind"]) for c in crosses] == [(idx[3], "golden"), (idx[5], "death")]
+
+
+def test_find_crosses_ignores_touch_without_crossing():
+    idx = pd.bdate_range("2024-01-01", periods=4)
+    fast = pd.Series([1.0, 2, 1, 1], index=idx)
+    slow = pd.Series([2.0, 2, 2, 2], index=idx)
+    assert find_crosses(fast, slow) == []
+
+
+@pytest.mark.parametrize(
+    "fast,slow,expected", [(2, 1, "bullish"), (1, 2, "bearish"), (1, 1, None), (None, 1, None), (float("nan"), 1, None)]
+)
+def test_sma_trend(fast, slow, expected):
+    assert sma_trend(fast, slow) == expected

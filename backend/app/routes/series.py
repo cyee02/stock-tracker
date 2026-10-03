@@ -3,7 +3,18 @@ import math
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.auth import Viewer, require_viewer
-from app.market import PERIOD_WINDOWS, TickerNotFound, classify, compute_bands, compute_returns
+from app.market import (
+    PERIOD_WINDOWS,
+    SMA_FAST,
+    SMA_SLOW,
+    TickerNotFound,
+    classify,
+    compute_bands,
+    compute_returns,
+    compute_smas,
+    find_crosses,
+    sma_trend,
+)
 
 router = APIRouter(prefix="/api")
 
@@ -47,7 +58,7 @@ def series(
             f"{ticker} has {len(close)} trading days of history; a {period} window needs {window}",
         )
 
-    df = compute_bands(close, window)
+    df = compute_bands(close, window).join(compute_smas(close))
     points = [
         {
             "date": idx.strftime("%Y-%m-%d"),
@@ -55,6 +66,8 @@ def series(
             "ma": _num(row.ma),
             "p25": _num(row.p25),
             "p75": _num(row.p75),
+            "sma50": _num(row.sma_fast),
+            "sma200": _num(row.sma_slow),
         }
         for idx, row in zip(df.index, df.itertuples(index=False))
     ]
@@ -78,7 +91,19 @@ def series(
         "period": period,
         "window": window,
         "points": points,
-        "latest": {**last, "signal": classify(last["close"], last["p25"], last["p75"])},
+        "latest": {
+            **last,
+            "signal": classify(last["close"], last["p25"], last["p75"]),
+            "trend": sma_trend(last["sma50"], last["sma200"]),
+        },
+        "sma": {
+            "fast": SMA_FAST,
+            "slow": SMA_SLOW,
+            "crosses": [
+                {"date": c["date"].strftime("%Y-%m-%d"), "kind": c["kind"]}
+                for c in find_crosses(df["sma_fast"], df["sma_slow"])
+            ],
+        },
     }
 
 
