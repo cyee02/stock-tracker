@@ -52,7 +52,8 @@ sessions, rotate `ADMIN_KEY` and revoke all links.
 ```
 backend/   FastAPI app (yfinance data, bands, SQLite share links) + pytest tests
 frontend/  React + TypeScript + Vite, Plotly chart
-scripts/   dev.sh — local setup and run; tailscale.sh — serve to your tailnet
+scripts/   dev.sh — local setup and run; restart.sh — restart on the current branch;
+           tailscale.sh — serve to your tailnet
 .claude/   Claude Code config: the pr-readme skill and the hook that enforces it
 Dockerfile Single container: builds the frontend and serves it from FastAPI
 fly.toml   Fly.io deployment config
@@ -72,6 +73,20 @@ Quick start — builds anything missing, generates an admin key on first run, an
 ```
 
 It prints the URL to open (it includes your local admin key, kept in the gitignored `.admin_key`). Share links created locally live in `local.db`.
+
+To use an existing key or database instead, put `ADMIN_KEY=…`, `DB_PATH=…` or `PORT=…` in a gitignored `.env` at the repo root; `dev.sh` reads it on start.
+
+### Restart on the current branch
+
+`scripts/restart.sh` restarts the app on whatever branch you have checked out. It pulls that branch's new commits (fast-forward only, so local work is never touched), stops whatever is listening on the port, starts `dev.sh` in the background (logging to `.app.log`), waits until it answers, and opens the browser.
+
+```bash
+./scripts/restart.sh            # restart once
+./scripts/restart.sh --watch    # and again whenever the branch gets new commits or you switch branch
+./scripts/restart.sh --no-open  # don't open the browser
+```
+
+On a Mac, double-click `scripts/Restart Stock Tracker.command` in Finder to do the same thing in one click. Drag it to the Dock to keep it handy.
 
 ### Running the pieces by hand
 

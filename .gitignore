@@ -12,3 +12,6 @@ frontend/dist/
 # local dev
 .admin_key
 local.db
+
+# restart.sh
+.app.log

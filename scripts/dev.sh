@@ -23,19 +23,27 @@ if [ ! -f frontend/dist/index.html ] || [ -n "$(find frontend/src frontend/index
   (cd frontend && npm run build)
 fi
 
-# 3. Admin key, kept out of git
-if [ ! -f .admin_key ]; then
+# 3. Optional overrides (ADMIN_KEY, DB_PATH, PORT) from a gitignored .env
+if [ -f .env ]; then
+  set -a
+  . ./.env
+  set +a
+fi
+
+# 4. Admin key, kept out of git
+if [ -z "${ADMIN_KEY:-}" ] && [ ! -f .admin_key ]; then
   python3 -c 'import secrets; print(secrets.token_urlsafe(32))' > .admin_key
   chmod 600 .admin_key
   echo "==> Generated a new admin key in .admin_key"
 fi
-ADMIN_KEY="$(cat .admin_key)"
+ADMIN_KEY="${ADMIN_KEY:-$(cat .admin_key)}"
+DB_PATH="${DB_PATH:-$ROOT/local.db}"
 
 PORT="${PORT:-8000}"
 echo
 echo "Open:  http://localhost:$PORT/?t=$ADMIN_KEY"
 echo "Admin: http://localhost:$PORT/admin"
 echo
-exec env ADMIN_KEY="$ADMIN_KEY" DB_PATH="$ROOT/local.db" \
+exec env ADMIN_KEY="$ADMIN_KEY" DB_PATH="$DB_PATH" \
   backend/.venv/bin/uvicorn --factory app.main:create_app \
   --app-dir backend --host 127.0.0.1 --port "$PORT"
