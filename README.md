@@ -12,6 +12,10 @@ Each date uses only the closes up to that date, so there's no look-ahead. Hover 
 
 Above the chart, an overview card shows the ticker's name, type and description from Yahoo, its NAV (ETFs report one; for mutual funds the quoted price is the NAV), and YTD / 1Y / 5Y / 10Y total returns (5Y and 10Y also annualized). Returns are measured from the last close on or before each period's start and include dividends, because they use the adjusted close. A period shows "—" when the history doesn't go back far enough.
 
+For stocks, the overview card also shows the **next earnings date** from Yahoo's calendar, with a countdown in days. When the company hasn't confirmed it yet, Yahoo only has an estimated window, which is shown as a range marked *est.* ETFs, funds and indices have no earnings date, so nothing is shown for them.
+
+Below the overview, two tabs switch between the **Chart** and **News**. The News tab lists the latest headlines Yahoo Finance has for the ticker (via `yfinance`), newest first, with publisher, age, a short summary and a link to the full article. The selected tab is kept in the URL (`?tab=news`), so a link can open straight to the news.
+
 Windows are measured in trading days: 3m = 63, 6m = 126, 1y = 252, 3y = 756, 5y = 1260, 10y = 2520.
 
 ## Access control
@@ -133,5 +137,5 @@ Get your admin key back with `fly ssh console -C 'printenv ADMIN_KEY'`, then ope
 
 Notes:
 - The machine auto-stops when idle, so the first request after a pause takes a few seconds.
-- Price history is cached in memory for an hour per ticker (`CACHE_TTL_SECONDS`).
+- Price history, the earnings date and news are cached in memory for an hour per ticker (`CACHE_TTL_SECONDS`), so headlines can be up to an hour old.
 - Tickers use Yahoo Finance symbols, e.g. `AAPL`, `SPY`, `D05.SI`, `0700.HK`.

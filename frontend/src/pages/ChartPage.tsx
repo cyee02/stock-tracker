@@ -1,16 +1,20 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, Period, PERIODS, SeriesResponse } from "../api";
 import BandChart from "../components/BandChart";
+import NewsList from "../components/NewsList";
 import SignalBadge from "../components/SignalBadge";
 import TickerForm from "../components/TickerForm";
 import TickerOverview from "../components/TickerOverview";
 
-function readQuery(): { ticker: string; period: Period } {
+type Tab = "chart" | "news";
+
+function readQuery(): { ticker: string; period: Period; tab: Tab } {
   const q = new URLSearchParams(window.location.search);
   const period = q.get("period") as Period | null;
   return {
     ticker: (q.get("ticker") ?? "").toUpperCase(),
     period: period && PERIODS.includes(period) ? period : "1y",
+    tab: q.get("tab") === "news" ? "news" : "chart",
   };
 }
 
@@ -20,6 +24,15 @@ export default function ChartPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [logScale, setLogScale] = useState(false);
+  const [tab, setTab] = useState<Tab>(initial.tab);
+
+  const selectTab = (next: Tab) => {
+    setTab(next);
+    const url = new URL(window.location.href);
+    if (next === "chart") url.searchParams.delete("tab");
+    else url.searchParams.set("tab", next);
+    window.history.replaceState(null, "", url.pathname + url.search);
+  };
 
   const load = useCallback((ticker: string, period: Period) => {
     setLoading(true);
@@ -52,19 +65,40 @@ export default function ChartPage() {
       {data && (
         <>
           <TickerOverview data={data} />
-          <SignalBadge data={data} />
-          <div className={`card chart-card${loading ? " stale" : ""}`}>
-            <div className="chart-toolbar">
-              <span className="muted">
-                Shaded area = 25th–75th percentile of closes over the trailing {data.period} window
-              </span>
-              <label className="toggle">
-                <input type="checkbox" checked={logScale} onChange={(e) => setLogScale(e.target.checked)} />
-                Log scale
-              </label>
-            </div>
-            <BandChart data={data} logScale={logScale} />
+          <div className="tabs" role="tablist">
+            {(["chart", "news"] as const).map((t) => (
+              <button
+                key={t}
+                role="tab"
+                aria-selected={tab === t}
+                className={`tab${tab === t ? " active" : ""}`}
+                onClick={() => selectTab(t)}
+              >
+                {t === "chart" ? "Chart" : "News"}
+              </button>
+            ))}
           </div>
+          {tab === "news" ? (
+            <div className="card news-card" role="tabpanel">
+              <NewsList ticker={data.ticker} />
+            </div>
+          ) : (
+            <>
+              <SignalBadge data={data} />
+              <div className={`card chart-card${loading ? " stale" : ""}`}>
+                <div className="chart-toolbar">
+                  <span className="muted">
+                    Shaded area = 25th–75th percentile of closes over the trailing {data.period} window
+                  </span>
+                  <label className="toggle">
+                    <input type="checkbox" checked={logScale} onChange={(e) => setLogScale(e.target.checked)} />
+                    Log scale
+                  </label>
+                </div>
+                <BandChart data={data} logScale={logScale} />
+              </div>
+            </>
+          )}
         </>
       )}
       {!data && !error && !loading && (

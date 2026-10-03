@@ -17,6 +17,8 @@ export interface TickerInfo {
   quote_type: string | null;
   description: string | null;
   nav: number | null;
+  earnings_date: string | null;
+  earnings_date_end: string | null;
 }
 
 export interface PeriodReturn {
@@ -34,6 +36,20 @@ export interface SeriesResponse {
   window: number;
   points: Point[];
   latest: Point & { signal: Signal };
+}
+
+export interface NewsItem {
+  title: string;
+  url: string | null;
+  publisher: string | null;
+  published_at: string | null;
+  summary: string | null;
+  thumbnail: string | null;
+}
+
+export interface NewsResponse {
+  ticker: string;
+  items: NewsItem[];
 }
 
 export interface Me {
@@ -81,6 +97,7 @@ export const api = {
   me: (token?: string | null) => request<Me>("/api/me", {}, token ?? getToken()),
   series: (ticker: string, period: Period) =>
     request<SeriesResponse>(`/api/series?ticker=${encodeURIComponent(ticker)}&period=${period}`),
+  news: (ticker: string) => request<NewsResponse>(`/api/news?ticker=${encodeURIComponent(ticker)}`),
   listLinks: () => request<ShareLink[]>("/api/admin/links"),
   createLink: (name: string) =>
     request<ShareLink>("/api/admin/links", { method: "POST", body: JSON.stringify({ name }) }),
