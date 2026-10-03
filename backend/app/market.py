@@ -272,6 +272,45 @@ def classify(close: float, p25: float, p75: float) -> str:
     return "fair"
 
 
+SMA_FAST = 50
+SMA_SLOW = 200
+
+
+def compute_smas(close: pd.Series, fast: int = SMA_FAST, slow: int = SMA_SLOW) -> pd.DataFrame:
+    """Trailing simple moving averages; NaN until each has a full window."""
+    return pd.DataFrame(
+        {
+            "sma_fast": close.rolling(fast, min_periods=fast).mean(),
+            "sma_slow": close.rolling(slow, min_periods=slow).mean(),
+        }
+    )
+
+
+def find_crosses(fast: pd.Series, slow: pd.Series) -> list[dict]:
+    """Dates where the fast SMA crosses the slow one.
+
+    "golden" when fast moves from at-or-below slow to above it, "death" when it
+    moves from at-or-above to below. Touching without crossing is not a cross.
+    """
+    diff = (fast - slow).dropna()
+    out = []
+    side = 0  # last strict side: 1 above, -1 below, 0 not yet known
+    for date, d in diff.items():
+        now = 1 if d > 0 else -1 if d < 0 else 0
+        if now == 0:
+            continue
+        if side and now != side:
+            out.append({"date": date, "kind": "golden" if now > 0 else "death"})
+        side = now
+    return out
+
+
+def sma_trend(fast: float | None, slow: float | None) -> str | None:
+    if fast is None or slow is None or math.isnan(fast) or math.isnan(slow):
+        return None
+    return "bullish" if fast > slow else "bearish" if fast < slow else None
+
+
 # (label, years back); YTD is measured from the prior year's last close.
 RETURN_PERIODS: list[tuple[str, int | None]] = [("YTD", None), ("1Y", 1), ("5Y", 5), ("10Y", 10)]
 

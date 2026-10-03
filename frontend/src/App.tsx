@@ -37,7 +37,7 @@ export default function App() {
     <div className="shell">
       <header className="topbar">
         <a href="/" className="brand">
-          Mean Reversion Tracker
+          Stock Tracker
         </a>
         {state.kind === "ok" && (
           <span className="who">

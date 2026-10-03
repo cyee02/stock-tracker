@@ -51,6 +51,10 @@ def test_admin_key_works(client):
     assert len(body["points"]) == 400
     assert body["points"][0]["ma"] is None
     assert body["latest"]["signal"] == "overpriced"  # steadily rising series
+    assert body["points"][48]["sma50"] is None and body["points"][49]["sma50"] is not None
+    assert body["points"][199]["sma200"] is not None
+    assert body["latest"]["trend"] == "bullish"
+    assert body["sma"] == {"fast": 50, "slow": 200, "crosses": []}
 
 
 def test_share_link_lifecycle(client):

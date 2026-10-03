@@ -1,8 +1,8 @@
-# Mean Reversion Tracker
+# Stock Tracker
 
-A private web app that shows whether a stock is trading **below** (underpriced) or **above** (overpriced) its recent range.
+A private web app for looking at a stock's price through a few simple strategies. The **Charts** tab has one view per strategy, each with a short description of how to read it.
 
-For a ticker and a moving-average window (3m, 6m, 1y, 3y, 5y or 10y), it plots:
+**Mean reversion** shows whether a stock is trading **below** (underpriced) or **above** (overpriced) its recent range. For a ticker and a window (3m, 6m, 1y, 3y, 5y or 10y), it plots:
 
 - **Close**: daily adjusted close from Yahoo Finance (`yfinance`)
 - **Moving average**: mean of the closes over the trailing window
@@ -10,11 +10,13 @@ For a ticker and a moving-average window (3m, 6m, 1y, 3y, 5y or 10y), it plots:
 
 Each date uses only the closes up to that date, so there's no look-ahead. Hover over the chart to see all four values for a date. The badge shows where the latest close sits: below p25 → *Underpriced*, above p75 → *Overpriced*, otherwise *Within range*.
 
+**50/200 SMA** is a trend-following view. It plots the close with its 50-day SMA (intermediate momentum) and 200-day SMA (long-term momentum), and marks every **golden cross** (50 crosses above 200, bullish ▲) and **death cross** (50 crosses below 200, bearish ▼) in the history. The badge says whether the 50-day is currently above or below the 200-day, and the card shows the most recent cross. A cross needs the 50-day to move strictly from one side of the 200-day to the other; touching doesn't count. These windows are fixed, so the window picker only affects mean reversion. The selected strategy is kept in the URL (`?strategy=sma-cross`).
+
 Above the chart, an overview card shows the ticker's name, type and description from Yahoo, its NAV (ETFs report one; for mutual funds the quoted price is the NAV), and YTD / 1Y / 5Y / 10Y total returns (5Y and 10Y also annualized). Returns are measured from the last close on or before each period's start and include dividends, because they use the adjusted close. A period shows "—" when the history doesn't go back far enough.
 
 For stocks, the overview card also shows the **next earnings date** from Yahoo's calendar, with a countdown in days. When the company hasn't confirmed it yet, Yahoo only has an estimated window, which is shown as a range marked *est.* ETFs, funds and indices have no earnings date, so nothing is shown for them.
 
-Below the overview, two tabs switch between the **Chart** and **News**. The News tab lists the latest headlines Yahoo Finance has for the ticker (via `yfinance`), newest first, with publisher, age, a short summary and a link to the full article. The selected tab is kept in the URL (`?tab=news`), so a link can open straight to the news.
+Below the overview, two tabs switch between **Charts** and **News**. The News tab lists the latest headlines Yahoo Finance has for the ticker (via `yfinance`), newest first, with publisher, age, a short summary and a link to the full article. The selected tab is kept in the URL (`?tab=news`), so a link can open straight to the news.
 
 Windows are measured in trading days: 3m = 63, 6m = 126, 1y = 252, 3y = 756, 5y = 1260, 10y = 2520.
 
@@ -50,7 +52,8 @@ sessions, rotate `ADMIN_KEY` and revoke all links.
 ```
 backend/   FastAPI app (yfinance data, bands, SQLite share links) + pytest tests
 frontend/  React + TypeScript + Vite, Plotly chart
-scripts/   dev.sh — local setup and run; tailscale.sh — serve to your tailnet
+scripts/   dev.sh — local setup and run; restart.sh — restart on the current branch;
+           tailscale.sh — serve to your tailnet
 .claude/   Claude Code config: the pr-readme skill and the hook that enforces it
 Dockerfile Single container: builds the frontend and serves it from FastAPI
 fly.toml   Fly.io deployment config
@@ -70,6 +73,20 @@ Quick start — builds anything missing, generates an admin key on first run, an
 ```
 
 It prints the URL to open (it includes your local admin key, kept in the gitignored `.admin_key`). Share links created locally live in `local.db`.
+
+To use an existing key or database instead, put `ADMIN_KEY=…`, `DB_PATH=…` or `PORT=…` in a gitignored `.env` at the repo root; `dev.sh` reads it on start.
+
+### Restart on the current branch
+
+`scripts/restart.sh` restarts the app on whatever branch you have checked out. It pulls that branch's new commits (fast-forward only, so local work is never touched), stops whatever is listening on the port, starts `dev.sh` in the background (logging to `.app.log`), waits until it answers, and opens the browser.
+
+```bash
+./scripts/restart.sh            # restart once
+./scripts/restart.sh --watch    # and again whenever the branch gets new commits or you switch branch
+./scripts/restart.sh --no-open  # don't open the browser
+```
+
+On a Mac, double-click `scripts/Restart Stock Tracker.command` in Finder to do the same thing in one click. Drag it to the Dock to keep it handy.
 
 ### Running the pieces by hand
 

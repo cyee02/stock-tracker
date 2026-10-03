@@ -42,7 +42,7 @@ export default function TickerForm({ initialTicker, initialPeriod, loading, onSu
         />
       </label>
       <label>
-        <span>Moving average period</span>
+        <span>Mean reversion window</span>
         <select
           value={period}
           onChange={(e) => {
