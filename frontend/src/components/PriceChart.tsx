@@ -85,13 +85,29 @@ interface Props {
   /** Plotly traces; `hover(label)` gives the shared hover template. */
   traces: (hover: (label: string) => string) => object[];
   legend?: ReactNode;
+  /** Merged into the layout, one level deep (e.g. extra axes, or `yaxis.domain`). */
+  layout?: Record<string, unknown>;
+  /** Redraws the traces when it changes, for overlays that load after the prices. */
+  redrawKey?: unknown;
+  /** Clicking the plot reports the date under the pointer. */
+  onDateClick?: (date: string) => void;
 }
 
 /**
  * Price chart shared by every strategy: range presets, start/end month pickers, slider,
  * and a y axis that refits to whatever is visible.
  */
-export default function PriceChart({ data, view, onViewChange, values, traces, legend }: Props) {
+export default function PriceChart({
+  data,
+  view,
+  onViewChange,
+  values,
+  traces,
+  legend,
+  layout: extraLayout,
+  redrawKey,
+  onDateClick,
+}: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const ready = useRef(false);
   // Set while we move the axes ourselves, so the relayout handler doesn't echo it back as a user zoom.
@@ -100,6 +116,8 @@ export default function PriceChart({ data, view, onViewChange, values, traces, l
   viewRef.current = view;
   const onViewRef = useRef(onViewChange);
   onViewRef.current = onViewChange;
+  const onClickRef = useRef(onDateClick);
+  onClickRef.current = onDateClick;
 
   const first = data.first_date;
   const last = data.latest.date;
@@ -136,7 +154,7 @@ export default function PriceChart({ data, view, onViewChange, values, traces, l
     const [start, end] = xRange(viewRef.current);
     const yRange = yRangeFor(points, values, start, end);
 
-    const layout = {
+    const base: Record<string, unknown> = {
       autosize: true,
       height: Math.max(360, Math.min(600, window.innerHeight * 0.62)),
       margin: { l: 48, r: 12, t: 12, b: 8 },
@@ -166,6 +184,11 @@ export default function PriceChart({ data, view, onViewChange, values, traces, l
         ...(yRange ? { range: yRange, autorange: false } : { autorange: true }),
       },
     };
+    const layout = { ...base };
+    for (const [k, v] of Object.entries(extraLayout ?? {})) {
+      const cur = layout[k];
+      layout[k] = cur && typeof cur === "object" && v && typeof v === "object" ? { ...cur, ...v } : v;
+    }
 
     let cancelled = false;
     ready.current = false;
@@ -174,6 +197,12 @@ export default function PriceChart({ data, view, onViewChange, values, traces, l
         if (cancelled) return;
         ready.current = true;
         gd.removeAllListeners?.("plotly_relayout");
+        gd.removeAllListeners?.("plotly_click");
+        gd.on("plotly_click", (ev) => {
+          const pts = ev.points as { x?: unknown }[] | undefined;
+          const x = pts?.[0]?.x;
+          if (typeof x === "string") onClickRef.current?.(x.slice(0, 10));
+        });
         // Zooming, dragging the slider or double-clicking reports the new range up to the page.
         gd.on("plotly_relayout", (ev) => {
           if (selfUpdate.current) return;
@@ -191,9 +220,10 @@ export default function PriceChart({ data, view, onViewChange, values, traces, l
     return () => {
       cancelled = true;
     };
-    // traces/values are rebuilt every render from `data`; redraw only when the data changes.
+    // traces/values are rebuilt every render from `data`; redraw only when the data
+    // (or an overlay, via redrawKey) changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data]);
+  }, [data, redrawKey]);
 
   // Move the axes when the view changes, refitting y to the visible values.
   useEffect(() => {
@@ -249,7 +279,7 @@ export default function PriceChart({ data, view, onViewChange, values, traces, l
         </span>
       </div>
       {legend && <ul className="legend">{legend}</ul>}
-      <div ref={ref} className="chart" />
+      <div ref={ref} className={`chart${onDateClick ? " clickable" : ""}`} />
     </>
   );
 }

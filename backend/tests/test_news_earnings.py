@@ -7,7 +7,18 @@ from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.main import create_app
-from app.market import History, NewsItem, TickerInfo, TTLCache, download_news, next_earnings, parse_news_item
+from app.market import (
+    History,
+    NewsItem,
+    TickerInfo,
+    TTLCache,
+    download_dated_news,
+    download_news,
+    news_query,
+    next_earnings,
+    parse_google_news,
+    parse_news_item,
+)
 
 ADMIN = "admin-key-for-tests-0123456789"
 AUTH = {"Authorization": f"Bearer {ADMIN}"}
@@ -187,3 +198,95 @@ def test_news_requires_auth_and_reports_upstream_errors(client):
     assert client.get("/api/news?ticker=AAPL").status_code == 401
     r = client.get("/api/news?ticker=DOWN", headers=AUTH)
     assert r.status_code == 502 and "rate limited" in r.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    "name, query",
+    [
+        ("Apple Inc.", '"Apple" stock'),
+        ("DBS Group Holdings Ltd", '"DBS" stock'),
+        ("SPDR S&P 500 ETF Trust", '"SPDR S&P 500 ETF" stock'),
+        ("Costco Wholesale Corporation", '"Costco Wholesale" stock'),
+        (None, '"F" stock'),
+    ],
+)
+def test_news_query_uses_short_company_name(name, query):
+    assert news_query("F", name) == query
+
+
+GOOGLE_RSS = """<?xml version="1.0"?><rss><channel>
+<item><title>Ford shares tumble - CNBC</title><link>https://news.google.com/a</link>
+<pubDate>Wed, 24 Jul 2024 07:00:00 GMT</pubDate><source url="https://cnbc.com">CNBC</source></item>
+<item><title>Untitled-less</title><link>javascript:x</link><pubDate>Fri, 26 Jul 2024 07:00:00 GMT</pubDate></item>
+<item><title></title></item>
+</channel></rss>"""
+
+
+def test_parse_google_news():
+    a, b = parse_google_news(GOOGLE_RSS)
+    assert (a.title, a.publisher, a.url) == ("Ford shares tumble", "CNBC", "https://news.google.com/a")
+    assert a.published_at == dt.datetime(2024, 7, 24, 7, tzinfo=dt.timezone.utc)
+    assert b.url is None and b.publisher is None
+
+
+def test_download_dated_news_trims_to_range(monkeypatch):
+    seen = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            pass
+
+        def read(self):
+            return GOOGLE_RSS.encode()
+
+    def fake_urlopen(req, timeout):
+        seen["url"] = req.full_url
+        return FakeResponse()
+
+    monkeypatch.setattr("app.market.urllib.request.urlopen", fake_urlopen)
+    items = download_dated_news('"Ford" stock', dt.date(2024, 7, 24), dt.date(2024, 7, 25))
+    assert [n.title for n in items] == ["Ford shares tumble"]
+    assert "after%3A2024-07-23+before%3A2024-07-26" in seen["url"]
+
+
+@pytest.fixture
+def dated_client(tmp_path):
+    calls = []
+
+    def loader(ticker, start=None):
+        idx = pd.bdate_range("2015-01-01", periods=400)
+        return History(close=pd.Series(np.linspace(50, 150, 400), index=idx), currency="USD", info=TickerInfo(name="Fake Inc."))
+
+    def dated_loader(query, start, end):
+        calls.append((query, start, end))
+        return [NewsItem(title="Old news", published_at=dt.datetime(2024, 7, 24, 7, tzinfo=dt.timezone.utc))]
+
+    settings = Settings(
+        admin_key=ADMIN, db_path=str(tmp_path / "t.db"), cache_ttl_seconds=60, static_dir=str(tmp_path / "x")
+    )
+    c = TestClient(create_app(settings, loader=loader, news_loader=lambda t: [], dated_news_loader=dated_loader))
+    c.dated_calls = calls
+    return c
+
+
+def test_dated_news_uses_cached_company_name(dated_client):
+    url = "/api/news?ticker=fake&start=2024-07-24&end=2024-07-25"
+    body = dated_client.get(url, headers=AUTH).json()
+    assert body["items"][0]["title"] == "Old news"
+    assert dated_client.dated_calls == [('"FAKE" stock', dt.date(2024, 7, 24), dt.date(2024, 7, 25))]
+    # Once the chart has loaded the ticker, its name is used instead of the symbol.
+    dated_client.get("/api/series?ticker=fake", headers=AUTH)
+    body = dated_client.get(url, headers=AUTH).json()
+    assert (body["start"], body["end"]) == ("2024-07-24", "2024-07-25")
+    assert dated_client.dated_calls[-1][0] == '"Fake" stock'
+
+
+@pytest.mark.parametrize(
+    "qs",
+    ["start=2024-07-24", "start=2024-07-25&end=2024-07-24", "start=2010-01-01&end=2024-07-24"],
+)
+def test_dated_news_rejects_bad_ranges(dated_client, qs):
+    assert dated_client.get(f"/api/news?ticker=X&{qs}", headers=AUTH).status_code == 422
