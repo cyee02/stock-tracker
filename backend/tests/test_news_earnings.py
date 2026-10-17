@@ -147,7 +147,7 @@ def test_empty_news_is_not_cached():
 def client(tmp_path):
     calls = []
 
-    def loader(ticker):
+    def loader(ticker, start=None):
         idx = pd.bdate_range("2015-01-01", periods=400)
         info = TickerInfo(name="Fake", earnings_date=dt.date(2026, 10, 27), earnings_date_end=dt.date(2026, 10, 30))
         return History(close=pd.Series(np.linspace(50, 150, 400), index=idx), currency="USD", info=info)

@@ -1,10 +1,8 @@
-import { Period, SeriesResponse } from "../api";
+import { ChartProps } from "../api";
 import PriceChart, { cssVar } from "./PriceChart";
 
-const PERIOD_YEARS: Record<Period, number> = { "3m": 0.25, "6m": 0.5, "1y": 1, "3y": 3, "5y": 5, "10y": 10 };
-
 /** Mean reversion: close, trailing moving average and the 25th–75th percentile band. */
-export default function BandChart({ data, logScale }: { data: SeriesResponse; logScale: boolean }) {
+export default function BandChart({ data, view, onViewChange }: ChartProps) {
   const { points } = data;
   const dates = points.map((p) => p.date);
 
@@ -52,8 +50,8 @@ export default function BandChart({ data, logScale }: { data: SeriesResponse; lo
   return (
     <PriceChart
       data={data}
-      logScale={logScale}
-      lookbackYears={Math.max(5, PERIOD_YEARS[data.period] * 2)}
+      view={view}
+      onViewChange={onViewChange}
       values={(p) => [p.close, p.ma, p.p25, p.p75]}
       traces={traces}
       legend={

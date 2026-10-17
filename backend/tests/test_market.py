@@ -99,3 +99,58 @@ def test_find_crosses_ignores_touch_without_crossing():
 )
 def test_sma_trend(fast, slow, expected):
     assert sma_trend(fast, slow) == expected
+
+
+def test_download_history_keeps_ohlc(monkeypatch):
+    import numpy as np
+    import pandas as pd
+
+    from app import market
+
+    idx = pd.date_range("2024-01-01", periods=5, freq="D", tz="America/New_York")
+    df = pd.DataFrame(
+        {
+            "Open": np.arange(10.0, 15),
+            "High": np.arange(12.0, 17),
+            "Low": np.arange(9.0, 14),
+            "Close": np.arange(11.0, 16),
+        },
+        index=idx,
+    )
+
+    class FakeTicker:
+        history_metadata = {"currency": "USD"}
+
+        def __init__(self, _):
+            pass
+
+        def history(self, **_):
+            return df
+
+    monkeypatch.setattr(market.yf, "Ticker", FakeTicker)
+    monkeypatch.setattr(market, "download_info", lambda t: market.TickerInfo(quote_type="ETF"))
+    h = market.download_history("X")
+    assert list(h.ohlc.columns) == ["Open", "High", "Low"]
+    assert h.ohlc.index.equals(h.close.index)
+    assert (h.ohlc["High"] >= h.ohlc["Low"]).all()
+
+
+def test_history_cache_reloads_only_for_an_earlier_start():
+    import datetime as dt
+
+    from app.market import History, HistoryCache
+
+    calls = []
+
+    def loader(ticker, start):
+        calls.append(start)
+        return History(close=pd.Series([1.0]), currency=None)
+
+    cache = HistoryCache(60, loader)
+    d = dt.date(2024, 1, 1)
+    cache.get("X", d)
+    cache.get("X", d + dt.timedelta(days=30))  # inside the cached span
+    cache.get("X", d - dt.timedelta(days=30))  # earlier: reload
+    cache.get("X", None)  # full history: reload
+    cache.get("X", d)  # anything after a full load is cached
+    assert calls == [d, d - dt.timedelta(days=30), None]

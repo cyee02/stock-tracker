@@ -1,7 +1,8 @@
-export const STRATEGIES = ["mean-reversion", "sma-cross"] as const;
+export const STRATEGIES = ["candlestick", "mean-reversion", "sma-cross"] as const;
 export type Strategy = (typeof STRATEGIES)[number];
 
-export const STRATEGY_INFO: Record<Strategy, { label: string; description: string }> = {
+export const STRATEGY_INFO: Record<Strategy, { label: string; description?: string }> = {
+  candlestick: { label: "Candlestick" },
   "mean-reversion": {
     label: "Mean reversion",
     description:

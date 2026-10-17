@@ -10,7 +10,7 @@ from app.market import History, TickerNotFound
 ADMIN = "admin-key-for-tests-0123456789"
 
 
-def fake_loader(ticker: str) -> History:
+def fake_loader(ticker: str, start=None) -> History:
     if ticker != "FAKE":
         raise TickerNotFound(ticker)
     idx = pd.bdate_range("2015-01-01", periods=400)
@@ -44,7 +44,7 @@ def test_no_token_rejected(client):
 def test_admin_key_works(client):
     r = client.get("/api/me", headers=auth(ADMIN))
     assert r.json() == {"role": "admin", "name": "Owner"}
-    r = client.get("/api/series?ticker=fake&period=1y", headers=auth(ADMIN))
+    r = client.get("/api/series?ticker=fake&period=1y&start=2015-01-01", headers=auth(ADMIN))
     assert r.status_code == 200
     body = r.json()
     assert body["ticker"] == "FAKE" and body["window"] == 252
@@ -79,3 +79,20 @@ def test_bad_inputs(client):
     assert client.get("/api/series?ticker=FAKE&period=2y", headers=auth(ADMIN)).status_code == 422
     r = client.get("/api/series?ticker=FAKE&period=3y", headers=auth(ADMIN))
     assert r.status_code == 422 and "needs 756" in r.json()["detail"]
+
+
+def test_series_defaults_to_the_latest_year(client):
+    body = client.get("/api/series?ticker=FAKE", headers=auth(ADMIN)).json()
+    last = pd.Timestamp(body["latest"]["date"])
+    assert body["start"] == (last - pd.DateOffset(years=1)).date().isoformat()
+    assert body["points"][0]["date"] >= body["start"]
+    assert len(body["points"]) < 400
+    assert body["first_date"] == "2015-01-01"
+    # Trailing indicators still use the closes before the window.
+    assert body["points"][0]["sma50"] is not None
+
+
+def test_returns_endpoint(client):
+    r = client.get("/api/returns?ticker=FAKE", headers=auth(ADMIN))
+    assert r.status_code == 200
+    assert [x["period"] for x in r.json()["returns"]] == ["YTD", "1Y", "5Y", "10Y"]

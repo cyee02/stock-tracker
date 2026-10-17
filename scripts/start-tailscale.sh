@@ -42,7 +42,28 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 echo "==> Publishing to the tailnet"
-tailscale serve --bg --https=443 "http://127.0.0.1:$PORT" >/dev/null
+#    If Serve isn't enabled on the tailnet, tailscale prints an enable link and
+#    waits forever, so run it with a deadline and show its output on failure.
+serve_log="$(mktemp)"
+tailscale serve --bg --https=443 "http://127.0.0.1:$PORT" >"$serve_log" 2>&1 </dev/null &
+serve_pid=$!
+for _ in $(seq 1 20); do
+  kill -0 "$serve_pid" 2>/dev/null || break
+  sleep 0.5
+done
+if kill -0 "$serve_pid" 2>/dev/null; then
+  kill "$serve_pid" 2>/dev/null || true
+  echo "!! 'tailscale serve' did not finish. Its output:" >&2
+  cat "$serve_log" >&2
+  rm -f "$serve_log"
+  exit 1
+fi
+if ! wait "$serve_pid"; then
+  cat "$serve_log" >&2
+  rm -f "$serve_log"
+  exit 1
+fi
+rm -f "$serve_log"
 URL="https://$(tailscale status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))')"
 
 echo
@@ -52,10 +73,12 @@ echo
 echo "Reachable only from devices signed in to your tailnet. No access key needed."
 echo
 
-# 3. Loopback bind, no --proxy-headers: both are load-bearing for the identity
-#    header check in app/auth.py. Do not add them here.
+# 3. Loopback bind and --no-proxy-headers: both are load-bearing for the identity
+#    header check in app/auth.py. uvicorn trusts X-Forwarded-For from loopback by
+#    default, and Serve sets it to the caller's tailnet IP, which would make
+#    request.client non-loopback and reject every real tailnet user.
 exec env TAILSCALE_AUTH=1 \
   TAILSCALE_ALLOWED_LOGINS="${TAILSCALE_ALLOWED_LOGINS:-}" \
   DB_PATH="$ROOT/local.db" \
   backend/.venv/bin/uvicorn --factory app.main:create_app \
-  --app-dir backend --host 127.0.0.1 --port "$PORT"
+  --app-dir backend --host 127.0.0.1 --port "$PORT" --no-proxy-headers

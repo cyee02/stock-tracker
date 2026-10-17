@@ -2,10 +2,21 @@ import { getToken } from "./auth";
 
 export const PERIODS = ["3m", "6m", "1y", "3y", "5y", "10y"] as const;
 export type Period = (typeof PERIODS)[number];
+export const PERIOD_LABELS: Record<Period, string> = {
+  "3m": "3 months",
+  "6m": "6 months",
+  "1y": "1 year",
+  "3y": "3 years",
+  "5y": "5 years",
+  "10y": "10 years",
+};
 export type Signal = "underpriced" | "fair" | "overpriced";
 
 export interface Point {
   date: string;
+  open: number | null;
+  high: number | null;
+  low: number | null;
   close: number;
   ma: number | null;
   p25: number | null;
@@ -40,12 +51,27 @@ export interface SeriesResponse {
   ticker: string;
   currency: string | null;
   info: TickerInfo;
-  returns: PeriodReturn[];
+  /** Earliest date Yahoo has for the ticker; `points` may start later. */
+  first_date: string;
+  /** First date requested; `points` start on the first trading day on or after it. */
+  start: string;
   period: Period;
   window: number;
   points: Point[];
   latest: Point & { signal: Signal; trend: Trend | null };
   sma: { fast: number; slow: number; crosses: SmaCross[] };
+}
+
+export interface ReturnsResponse {
+  ticker: string;
+  returns: PeriodReturn[];
+}
+
+/** Props every strategy chart takes. */
+export interface ChartProps {
+  data: SeriesResponse;
+  view: import("./view").View;
+  onViewChange: (view: import("./view").View) => void;
 }
 
 export interface NewsItem {
@@ -105,8 +131,11 @@ async function request<T>(path: string, init: RequestInit = {}, token = getToken
 
 export const api = {
   me: (token?: string | null) => request<Me>("/api/me", {}, token ?? getToken()),
-  series: (ticker: string, period: Period) =>
-    request<SeriesResponse>(`/api/series?ticker=${encodeURIComponent(ticker)}&period=${period}`),
+  series: (ticker: string, period: Period, start?: string) =>
+    request<SeriesResponse>(
+      `/api/series?ticker=${encodeURIComponent(ticker)}&period=${period}${start ? `&start=${start}` : ""}`,
+    ),
+  returns: (ticker: string) => request<ReturnsResponse>(`/api/returns?ticker=${encodeURIComponent(ticker)}`),
   news: (ticker: string) => request<NewsResponse>(`/api/news?ticker=${encodeURIComponent(ticker)}`),
   listLinks: () => request<ShareLink[]>("/api/admin/links"),
   createLink: (name: string) =>

@@ -1,8 +1,8 @@
-import { Point, SeriesResponse } from "../api";
+import { ChartProps, Point } from "../api";
 import PriceChart, { cssVar } from "./PriceChart";
 
 /** 50/200-day SMA crossover: close, both SMAs, and a marker at each golden or death cross. */
-export default function SmaCrossChart({ data, logScale }: { data: SeriesResponse; logScale: boolean }) {
+export default function SmaCrossChart({ data, view, onViewChange }: ChartProps) {
   const { points, sma } = data;
   const dates = points.map((p) => p.date);
   const byDate = new Map<string, Point>(points.map((p) => [p.date, p]));
@@ -62,8 +62,8 @@ export default function SmaCrossChart({ data, logScale }: { data: SeriesResponse
   return (
     <PriceChart
       data={data}
-      logScale={logScale}
-      lookbackYears={5}
+      view={view}
+      onViewChange={onViewChange}
       values={(p) => [p.close, p.sma50, p.sma200]}
       traces={traces}
       legend={
