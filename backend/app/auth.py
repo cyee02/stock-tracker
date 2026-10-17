@@ -29,10 +29,10 @@ def _tailnet_viewer(request: Request) -> Viewer | None:
     2. The TCP peer is loopback. Remote tailnet traffic arrives via the Serve
        proxy on loopback; anything reaching this socket from elsewhere is not
        Tailscale and gets no identity.
-    3. The operator binds uvicorn to 127.0.0.1 and does NOT pass
+    3. The operator binds uvicorn to 127.0.0.1 and passes --no-proxy-headers and does NOT pass
        --proxy-headers/--forwarded-allow-ips. With those flags, `request.client`
        is taken from X-Forwarded-For, which a caller controls, and condition 2
-       collapses. scripts/tailscale.sh binds correctly.
+       collapses. scripts/start-tailscale.sh binds correctly and passes --no-proxy-headers.
     """
     settings = request.app.state.settings
     if not settings.tailscale_auth:

@@ -22,6 +22,8 @@
   --c-sma200: #9333ea;
   --c-golden: #15803d;
   --c-death: #dc2626;
+  --c-up: #16a34a;
+  --c-down: #dc2626;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -48,6 +50,8 @@
     --c-sma200: #c084fc;
     --c-golden: #4ade80;
     --c-death: #f87171;
+    --c-up: #4ade80;
+    --c-down: #f87171;
   }
 }
 
@@ -111,10 +115,20 @@ button.danger { background: transparent; color: var(--warn-fg); border-color: va
 .chart-card { padding: 12px 8px 8px; overflow: hidden; }
 .chart-card.stale { opacity: 0.6; }
 .chart-toolbar { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 0 8px 4px; font-size: 13px; }
-.toggle { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
-.toggle input { margin: 0; }
 .chart { width: 100%; }
-.legend { list-style: none; display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 4px 0 0; padding: 0 8px; font-size: 13px; color: var(--fg-muted); }
+.chart-controls { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px 16px; padding: 0 8px; }
+.range-presets { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.range-btn { padding: 4px 10px; font-size: 13px; color: var(--fg-muted); border-color: transparent; background: transparent; }
+.range-btn:hover { background: var(--neutral-bg); }
+.range-btn.active { background: var(--neutral-bg); color: var(--fg); border-color: var(--border); }
+.inline-select { display: inline-flex; align-items: center; gap: 8px; }
+.inline-select select { padding: 4px 8px; }
+.c-up { color: var(--c-up); }
+.c-down { color: var(--c-down); }
+.range-pickers { display: inline-flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13px; }
+.month-picker { display: inline-flex; align-items: center; gap: 6px; }
+.month-picker select { padding: 4px 8px; }
+.legend { list-style: none; display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 4px 0 0; padding: 0; font-size: 13px; color: var(--fg-muted); }
 .legend li { display: inline-flex; align-items: center; gap: 6px; }
 .swatch { display: inline-block; width: 18px; border-top: 2px solid; }
 .s-close { border-color: var(--c-close); }

@@ -16,7 +16,7 @@ from app.market import History
 LOGIN = {"Tailscale-User-Login": "me@example.com", "Tailscale-User-Name": "Yee Chia"}
 
 
-def fake_loader(ticker: str) -> History:
+def fake_loader(ticker: str, start=None) -> History:
     idx = pd.bdate_range("2015-01-01", periods=400)
     return History(close=pd.Series(np.linspace(50, 150, 400), index=idx), currency="USD")
 

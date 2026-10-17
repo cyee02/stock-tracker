@@ -42,6 +42,11 @@ class History:
     close: pd.Series
     currency: str | None
     info: TickerInfo = field(default_factory=TickerInfo)
+    # Daily Open/High/Low aligned to `close`'s index; None when the loader has no OHLC.
+    ohlc: pd.DataFrame | None = None
+    # Earliest date Yahoo has for the ticker, which may be before `close` starts
+    # when the loader was asked for a recent window only.
+    first_date: dt.date | None = None
 
 
 def _float(x) -> float | None:
@@ -104,24 +109,38 @@ def download_earnings(t: yf.Ticker, info: TickerInfo) -> None:
     info.earnings_date, info.earnings_date_end = next_earnings(dates)
 
 
-def download_history(ticker: str) -> History:
+def download_history(ticker: str, start: dt.date | None = None) -> History:
+    """Daily adjusted prices from `start` onward, or the full history when it's None."""
     t = yf.Ticker(ticker)
-    df = t.history(period="max", interval="1d", auto_adjust=True)
+    if start is None:
+        df = t.history(period="max", interval="1d", auto_adjust=True)
+    else:
+        df = t.history(start=start.isoformat(), interval="1d", auto_adjust=True)
     if df is None or df.empty or "Close" not in df:
         raise TickerNotFound(ticker)
     close = df["Close"].dropna()
     if close.empty:
         raise TickerNotFound(ticker)
     close.index = pd.DatetimeIndex(close.index).tz_localize(None).normalize()
+    ohlc = None
+    if {"Open", "High", "Low"} <= set(df.columns):
+        ohlc = df.loc[df["Close"].notna(), ["Open", "High", "Low"]].copy()
+        ohlc.index = close.index
     currency = None
+    first_date = close.index[0].date() if start is None else None
     try:
-        currency = t.history_metadata.get("currency")
+        meta = t.history_metadata
+        currency = meta.get("currency")
+        if first_date is None and meta.get("firstTradeDate") is not None:
+            # A Timestamp in recent yfinance, epoch seconds in older ones.
+            ftd = meta["firstTradeDate"]
+            first_date = (pd.Timestamp(ftd, unit="s") if isinstance(ftd, (int, float)) else pd.Timestamp(ftd)).date()
     except Exception:
         pass
     info = download_info(t)
     if info.quote_type in (None, "EQUITY"):
         download_earnings(t, info)
-    return History(close=close, currency=currency, info=info)
+    return History(close=close, currency=currency, info=info, ohlc=ohlc, first_date=first_date)
 
 
 @dataclass
@@ -243,9 +262,35 @@ class TTLCache:
         return value
 
 
-class HistoryCache(TTLCache):
+class HistoryCache:
+    """Per-ticker price history cache that remembers how far back each entry reaches.
+
+    A request for an earlier start than the cached one reloads from that start;
+    anything inside the cached span is served from memory.
+    """
+
     def __init__(self, ttl_seconds: int, loader=download_history):
-        super().__init__(ttl_seconds, loader)
+        self.ttl = ttl_seconds
+        self.loader = loader
+        # ticker -> (loaded at, start it was loaded from (None = full history), history)
+        self._data: dict[str, tuple[float, dt.date | None, History]] = {}
+        self._lock = threading.Lock()
+
+    def get(self, ticker: str, start: dt.date | None = None) -> History:
+        now = time.monotonic()
+        with self._lock:
+            hit = self._data.get(ticker)
+            if hit and now - hit[0] < self.ttl and (hit[1] is None or (start is not None and hit[1] <= start)):
+                return hit[2]
+        value = self.loader(ticker, start)
+        with self._lock:
+            self._data[ticker] = (now, start, value)
+        return value
+
+
+def lookback_days(trading_days: int) -> int:
+    """Calendar days that comfortably hold `trading_days` sessions, holidays included."""
+    return math.ceil(trading_days * 7 / 5 * 1.1) + 10
 
 
 def compute_bands(close: pd.Series, window: int) -> pd.DataFrame:

@@ -1,15 +1,56 @@
 import { ReactNode, useEffect, useRef } from "react";
-import Plotly, { PlotlyElement } from "plotly.js-basic-dist-min";
+import Plotly, { PlotlyElement } from "plotly.js-finance-dist-min";
 import { Point, SeriesResponse } from "../api";
+import { monthEnd, Preset, PRESETS, presetStart, TODAY, View, viewEnd } from "../view";
 
 export function cssVar(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
-function shiftYears(date: string, years: number): string {
-  const d = new Date(date);
-  d.setMonth(d.getMonth() - Math.round(years * 12));
-  return d.toISOString().slice(0, 10);
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** Year + month dropdowns; `allowToday` adds a "Today" choice to the year list that hides the month. */
+function MonthPicker({
+  label,
+  value,
+  years,
+  allowToday,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  years: number[];
+  allowToday?: boolean;
+  onChange: (ym: string) => void;
+}) {
+  const today = value === TODAY;
+  const [y, m] = today ? ["", ""] : value.split("-");
+  return (
+    <span className="month-picker">
+      <span className="muted">{label}</span>
+      {!today && (
+        <select aria-label={`${label} month`} value={m} onChange={(e) => onChange(`${y}-${e.target.value}`)}>
+          {MONTHS.map((name, i) => (
+            <option key={name} value={String(i + 1).padStart(2, "0")}>
+              {name}
+            </option>
+          ))}
+        </select>
+      )}
+      <select
+        aria-label={`${label} year`}
+        value={today ? TODAY : y}
+        onChange={(e) => onChange(e.target.value === TODAY ? TODAY : `${e.target.value}-${m || "12"}`)}
+      >
+        {allowToday && <option value={TODAY}>Today</option>}
+        {years.map((yr) => (
+          <option key={yr} value={yr}>
+            {yr}
+          </option>
+        ))}
+      </select>
+    </span>
+  );
 }
 
 /** Y range covering every plotted value within the visible date window. */
@@ -18,7 +59,6 @@ function yRangeFor(
   values: (p: Point) => (number | null)[],
   start: string,
   end: string,
-  log: boolean,
 ): [number, number] | null {
   let lo = Infinity;
   let hi = -Infinity;
@@ -31,36 +71,60 @@ function yRangeFor(
     }
   }
   if (!isFinite(lo)) return null;
-  if (log) {
-    const [a, b] = [Math.log10(Math.max(lo, 1e-6)), Math.log10(hi)];
-    const pad = (b - a) * 0.05 || 0.05;
-    return [a - pad, b + pad];
-  }
   const pad = (hi - lo) * 0.05 || hi * 0.05;
   return [lo - pad, hi + pad];
 }
 
 interface Props {
   data: SeriesResponse;
-  logScale: boolean;
-  /** How far back the initial view reaches. */
-  lookbackYears: number;
+  /** Visible date range, owned by the page so it survives strategy switches and reloads. */
+  view: View;
+  onViewChange: (view: View) => void;
   /** Values the y axis must fit for a point. */
   values: (p: Point) => (number | null)[];
   /** Plotly traces; `hover(label)` gives the shared hover template. */
   traces: (hover: (label: string) => string) => object[];
-  legend: ReactNode;
+  legend?: ReactNode;
 }
 
-/** Price chart shared by every strategy: date range buttons, slider, and y axis that refits on zoom. */
-export default function PriceChart({ data, logScale, lookbackYears, values, traces, legend }: Props) {
+/**
+ * Price chart shared by every strategy: range presets, start/end month pickers, slider,
+ * and a y axis that refits to whatever is visible.
+ */
+export default function PriceChart({ data, view, onViewChange, values, traces, legend }: Props) {
   const ref = useRef<HTMLDivElement>(null);
+  const ready = useRef(false);
+  // Set while we move the axes ourselves, so the relayout handler doesn't echo it back as a user zoom.
+  const selfUpdate = useRef(false);
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  const onViewRef = useRef(onViewChange);
+  onViewRef.current = onViewChange;
 
+  const first = data.first_date;
+  const last = data.latest.date;
+  const xRange = (v: View): [string, string] => [v.start, viewEnd(v, last)];
+
+  const setFrom = (ym: string) => {
+    const start = `${ym}-01` < first ? first : `${ym}-01`;
+    // Moving the start past the end drags the end along to today.
+    onViewChange({ start, end: start > viewEnd(view, last) ? TODAY : view.end });
+  };
+  const setTo = (ym: string) => {
+    const end = ym === TODAY ? TODAY : monthEnd(ym) >= last ? TODAY : monthEnd(ym);
+    const start = end !== TODAY && end < view.start ? `${ym}-01` : view.start;
+    onViewChange({ start, end });
+  };
+  const activePreset = PRESETS.find((p) => view.end === TODAY && view.start === presetStart(p, last, first));
+
+  const years: number[] = [];
+  for (let y = Number(last.slice(0, 4)); y >= Number(first.slice(0, 4)); y--) years.push(y);
+
+  // Full redraw when the data changes.
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     const { points, currency } = data;
-    const dates = points.map((p) => p.date);
     const colors = {
       text: cssVar("--fg-muted"),
       grid: cssVar("--grid"),
@@ -69,15 +133,13 @@ export default function PriceChart({ data, logScale, lookbackYears, values, trac
     };
     const unit = currency ? ` ${currency}` : "";
     const hover = (label: string) => `${label}: %{y:,.2f}${unit}<extra></extra>`;
-
-    const end = dates[dates.length - 1];
-    const start = dates[0] > shiftYears(end, lookbackYears) ? dates[0] : shiftYears(end, lookbackYears);
-    const yRange = yRangeFor(points, values, start, end, logScale);
+    const [start, end] = xRange(viewRef.current);
+    const yRange = yRangeFor(points, values, start, end);
 
     const layout = {
       autosize: true,
       height: Math.max(360, Math.min(600, window.innerHeight * 0.62)),
-      margin: { l: 48, r: 12, t: 36, b: 8 },
+      margin: { l: 48, r: 12, t: 12, b: 8 },
       paper_bgcolor: colors.bg,
       plot_bgcolor: colors.bg,
       font: { color: colors.text, family: "inherit" },
@@ -94,24 +156,10 @@ export default function PriceChart({ data, logScale, lookbackYears, values, trac
         spikethickness: 1,
         spikedash: "dot",
         spikecolor: colors.text,
-        rangeselector: {
-          x: 0,
-          y: 1.01,
-          yanchor: "bottom",
-          bgcolor: colors.bg,
-          activecolor: colors.grid,
-          buttons: [
-            { count: 1, label: "1Y", step: "year", stepmode: "backward" },
-            { count: 3, label: "3Y", step: "year", stepmode: "backward" },
-            { count: 5, label: "5Y", step: "year", stepmode: "backward" },
-            { count: 10, label: "10Y", step: "year", stepmode: "backward" },
-            { step: "all", label: "All" },
-          ],
-        },
         rangeslider: { visible: true, thickness: 0.08, bgcolor: colors.bg, bordercolor: colors.grid },
       },
       yaxis: {
-        type: logScale ? "log" : "linear",
+        type: "linear",
         gridcolor: colors.grid,
         fixedrange: false,
         tickformat: ",.2~f",
@@ -120,34 +168,52 @@ export default function PriceChart({ data, logScale, lookbackYears, values, trac
     };
 
     let cancelled = false;
-    let adjusting = false;
+    ready.current = false;
     Plotly.react(el, traces(hover), layout, { responsive: true, displayModeBar: false }).then(
       (gd: PlotlyElement) => {
         if (cancelled) return;
+        ready.current = true;
         gd.removeAllListeners?.("plotly_relayout");
+        // Zooming, dragging the slider or double-clicking reports the new range up to the page.
         gd.on("plotly_relayout", (ev) => {
-          if (adjusting) return;
+          if (selfUpdate.current) return;
           let s: string | undefined;
           let e: string | undefined;
           if (Array.isArray(ev["xaxis.range"])) [s, e] = ev["xaxis.range"] as string[];
           else if (ev["xaxis.range[0]"]) [s, e] = [ev["xaxis.range[0]"] as string, ev["xaxis.range[1]"] as string];
-          else if (ev["xaxis.autorange"]) [s, e] = [dates[0], end];
+          else if (ev["xaxis.autorange"]) [s, e] = [points[0].date, last];
           if (!s || !e) return;
-          const r = yRangeFor(points, values, s.slice(0, 10), e.slice(0, 10), logScale);
-          if (!r) return;
-          adjusting = true;
-          Plotly.relayout(gd, { "yaxis.range": r, "yaxis.autorange": false }).finally(() => {
-            adjusting = false;
-          });
+          const [s10, e10] = [s.slice(0, 10), e.slice(0, 10)];
+          onViewRef.current({ start: s10, end: e10 >= last ? TODAY : e10 });
         });
       },
     );
     return () => {
       cancelled = true;
     };
-    // traces/values are rebuilt every render from `data`; redraw only when the inputs change.
+    // traces/values are rebuilt every render from `data`; redraw only when the data changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, logScale, lookbackYears]);
+  }, [data]);
+
+  // Move the axes when the view changes, refitting y to the visible values.
+  useEffect(() => {
+    const gd = ref.current as PlotlyElement | null;
+    if (!gd || !ready.current) return;
+    const [s, e] = xRange(view);
+    const update: Record<string, unknown> = {};
+    const cur = gd.layout?.xaxis?.range;
+    if (!cur || String(cur[0]).slice(0, 10) !== s || String(cur[1]).slice(0, 10) !== e) {
+      update["xaxis.range"] = [s, e];
+    }
+    const yr = yRangeFor(data.points, values, s, e);
+    if (yr) Object.assign(update, { "yaxis.range": yr, "yaxis.autorange": false });
+    if (!Object.keys(update).length) return;
+    selfUpdate.current = true;
+    Plotly.relayout(gd, update).finally(() => {
+      selfUpdate.current = false;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view.start, view.end]);
 
   useEffect(() => {
     const el = ref.current;
@@ -158,7 +224,31 @@ export default function PriceChart({ data, logScale, lookbackYears, values, trac
 
   return (
     <>
-      <ul className="legend">{legend}</ul>
+      <div className="chart-controls">
+        <span className="range-presets" role="group" aria-label="Date range">
+          {PRESETS.map((p: Preset) => (
+            <button
+              key={p}
+              className={`range-btn${activePreset === p ? " active" : ""}`}
+              aria-pressed={activePreset === p}
+              onClick={() => onViewChange({ start: presetStart(p, last, first), end: TODAY })}
+            >
+              {p}
+            </button>
+          ))}
+        </span>
+        <span className="range-pickers">
+          <MonthPicker label="From" value={view.start.slice(0, 7)} years={years} onChange={setFrom} />
+          <MonthPicker
+            label="To"
+            value={view.end === TODAY ? TODAY : view.end.slice(0, 7)}
+            years={years}
+            allowToday
+            onChange={setTo}
+          />
+        </span>
+      </div>
+      {legend && <ul className="legend">{legend}</ul>}
       <div ref={ref} className="chart" />
     </>
   );
