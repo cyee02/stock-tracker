@@ -85,7 +85,16 @@ export interface NewsItem {
 
 export interface NewsResponse {
   ticker: string;
+  /** Set when the headlines were looked up for a date range rather than the latest. */
+  start: string | null;
+  end: string | null;
   items: NewsItem[];
+}
+
+/** Inclusive calendar-date range of a dated news lookup. */
+export interface DateRange {
+  start: string;
+  end: string;
 }
 
 export interface Me {
@@ -136,7 +145,10 @@ export const api = {
       `/api/series?ticker=${encodeURIComponent(ticker)}&period=${period}${start ? `&start=${start}` : ""}`,
     ),
   returns: (ticker: string) => request<ReturnsResponse>(`/api/returns?ticker=${encodeURIComponent(ticker)}`),
-  news: (ticker: string) => request<NewsResponse>(`/api/news?ticker=${encodeURIComponent(ticker)}`),
+  news: (ticker: string, range?: DateRange) =>
+    request<NewsResponse>(
+      `/api/news?ticker=${encodeURIComponent(ticker)}${range ? `&start=${range.start}&end=${range.end}` : ""}`,
+    ),
   listLinks: () => request<ShareLink[]>("/api/admin/links"),
   createLink: (name: string) =>
     request<ShareLink>("/api/admin/links", { method: "POST", body: JSON.stringify({ name }) }),

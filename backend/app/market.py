@@ -1,8 +1,13 @@
 import datetime as dt
+import email.utils
 import logging
 import math
+import re
 import threading
 import time
+import urllib.parse
+import urllib.request
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 
 import pandas as pd
@@ -238,6 +243,72 @@ def download_news(ticker: str, count: int = 20) -> list[NewsItem]:
     return sorted(items, key=lambda n: n.published_at or epoch, reverse=True)
 
 
+GOOGLE_NEWS_RSS = "https://news.google.com/rss/search"
+# Legal-form suffixes that articles rarely repeat ("Apple Inc." is written "Apple").
+_NAME_SUFFIXES = re.compile(
+    r"[,.]?\s+(inc|incorporated|corp|corporation|co|company|ltd|limited|plc|holdings?|group|"
+    r"trust|n\.?v|s\.?a|ag|se|class [a-z])\.?$",
+    re.IGNORECASE,
+)
+
+
+def news_query(ticker: str, name: str | None) -> str:
+    """Google News search for a ticker's coverage.
+
+    The company name finds far more relevant stories than the symbol, which is
+    often a common word ("F", "SPY") or never printed at all ("D05.SI").
+    """
+    if not name:
+        return f'"{ticker}" stock'
+    short = name.strip()
+    while (trimmed := _NAME_SUFFIXES.sub("", short).strip()) and trimmed != short:
+        short = trimmed
+    return f'"{short}" stock'
+
+
+def parse_google_news(xml_text: str) -> list[NewsItem]:
+    """Items of a Google News RSS feed; titles lose their " - Publisher" tail."""
+    root = ET.fromstring(xml_text)
+    items = []
+    for it in root.iter("item"):
+        title = (it.findtext("title") or "").strip()
+        if not title:
+            continue
+        publisher = (it.findtext("source") or "").strip() or None
+        if publisher and title.endswith(f" - {publisher}"):
+            title = title[: -len(publisher) - 3]
+        link = it.findtext("link")
+        if not (isinstance(link, str) and link.startswith(("https://", "http://"))):
+            link = None
+        published = None
+        if raw := it.findtext("pubDate"):
+            try:
+                published = email.utils.parsedate_to_datetime(raw).astimezone(dt.timezone.utc)
+            except (TypeError, ValueError):
+                pass
+        items.append(NewsItem(title=title, url=link, publisher=publisher, published_at=published))
+    return items
+
+
+def download_dated_news(query: str, start: dt.date, end: dt.date) -> list[NewsItem]:
+    """Headlines matching `query` published from `start` to `end` (inclusive), newest first.
+
+    Yahoo only serves the latest ~20 stories, so dated lookups go to Google
+    News, whose search takes date bounds. It returns at most 100 items, picked
+    by relevance, so long ranges get the most prominent stories only.
+    """
+    # Google's after:/before: bounds are exclusive.
+    q = f"{query} after:{(start - dt.timedelta(days=1)).isoformat()} before:{(end + dt.timedelta(days=1)).isoformat()}"
+    url = f"{GOOGLE_NEWS_RSS}?{urllib.parse.urlencode({'q': q, 'hl': 'en-US', 'gl': 'US', 'ceid': 'US:en'})}"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (stock-tracker)"})
+    with urllib.request.urlopen(req, timeout=15) as res:
+        items = parse_google_news(res.read().decode("utf-8", "replace"))
+    # The bounds are fuzzy at the edges (Google dates items by day), so trim to the range.
+    items = [n for n in items if n.published_at is None or start <= n.published_at.date() <= end]
+    epoch = dt.datetime.min.replace(tzinfo=dt.timezone.utc)
+    return sorted(items, key=lambda n: n.published_at or epoch, reverse=True)
+
+
 class TTLCache:
     """Per-ticker in-memory cache in front of a slow Yahoo loader."""
 
@@ -286,6 +357,12 @@ class HistoryCache:
         with self._lock:
             self._data[ticker] = (now, start, value)
         return value
+
+    def peek(self, ticker: str) -> History | None:
+        """Cached history of any age or span, without loading anything."""
+        with self._lock:
+            hit = self._data.get(ticker)
+        return hit[2] if hit else None
 
 
 def lookback_days(trading_days: int) -> int:

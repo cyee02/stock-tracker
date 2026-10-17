@@ -17,6 +17,7 @@ from app.market import (
     compute_smas,
     find_crosses,
     lookback_days,
+    news_query,
     sma_trend,
 )
 
@@ -156,19 +157,41 @@ def returns(
     }
 
 
+NEWS_MAX_DAYS = 3660
+
+
 @router.get("/news")
 def news(
     request: Request,
     ticker: str = Query(..., min_length=1, max_length=20),
+    start: dt.date | None = Query(None, description="With `end`: headlines published on these dates instead of the latest"),
+    end: dt.date | None = Query(None),
     _: Viewer = Depends(require_viewer),
 ):
     ticker = ticker.strip().upper()
-    try:
-        items = request.app.state.news.get(ticker)
-    except Exception as exc:  # network errors, Yahoo rate limiting, etc.
-        raise HTTPException(502, f"Could not fetch news from Yahoo Finance: {exc}")
+    if (start is None) != (end is None):
+        raise HTTPException(422, "start and end must be given together")
+    if start is not None:
+        if end < start:
+            raise HTTPException(422, "end must not be before start")
+        if (end - start).days > NEWS_MAX_DAYS:
+            raise HTTPException(422, f"date range must be at most {NEWS_MAX_DAYS} days")
+        # The name comes from whatever the chart already loaded; no extra Yahoo call.
+        cached = request.app.state.history.peek(ticker)
+        query = news_query(ticker, cached.info.name if cached else None)
+        try:
+            items = request.app.state.dated_news.get((query, start, end))
+        except Exception as exc:  # network errors, rate limiting, malformed feed
+            raise HTTPException(502, f"Could not fetch news from Google News: {exc}")
+    else:
+        try:
+            items = request.app.state.news.get(ticker)
+        except Exception as exc:  # network errors, Yahoo rate limiting, etc.
+            raise HTTPException(502, f"Could not fetch news from Yahoo Finance: {exc}")
     return {
         "ticker": ticker,
+        "start": _iso(start),
+        "end": _iso(end),
         "items": [
             {
                 "title": n.title,

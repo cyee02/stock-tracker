@@ -2,6 +2,8 @@
 
 A private web app for looking at a stock's price through a few simple strategies. The **Charts** tab has one view per strategy, each with a short description of how to read it.
 
+**Candlestick** (the default view) draws daily open/high/low/close candles: green when the close is above the open, red when below. A row of dots under the candles marks the trading days that have news headlines (bigger dots mean more stories), the way Bloomberg's charts show news events. Hover any day to see its prices and the first few headlines; click it to open the News tab for that day. A day's news includes everything published since the previous session, so a Monday also shows the weekend's stories. The dots come from Google News searches for `"<company name>" stock`; each search returns at most 100 stories by relevance, so the dots show the top stories rather than every one.
+
 **Mean reversion** shows whether a stock is trading **below** (underpriced) or **above** (overpriced) its recent range. For a ticker and a window (3m, 6m, 1y, 3y, 5y or 10y), it plots:
 
 - **Close**: daily adjusted close from Yahoo Finance (`yfinance`)
@@ -16,7 +18,7 @@ Above the chart, an overview card shows the ticker's name, type and description 
 
 For stocks, the overview card also shows the **next earnings date** from Yahoo's calendar, with a countdown in days. When the company hasn't confirmed it yet, Yahoo only has an estimated window, which is shown as a range marked *est.* ETFs, funds and indices have no earnings date, so nothing is shown for them.
 
-Below the overview, two tabs switch between **Charts** and **News**. The News tab lists the latest headlines Yahoo Finance has for the ticker (via `yfinance`), newest first, with publisher, age, a short summary and a link to the full article. The selected tab is kept in the URL (`?tab=news`), so a link can open straight to the news.
+Below the overview, two tabs switch between **Charts** and **News**. The News tab lists the latest headlines Yahoo Finance has for the ticker (via `yfinance`), newest first, with publisher, age, a short summary and a link to the full article. The selected tab is kept in the URL (`?tab=news`), so a link can open straight to the news. Clicking a day on the candlestick chart shows that day's headlines instead, from Google News, because Yahoo only keeps the latest stories; the date is kept in the URL too (`?tab=news&news_date=2024-08-01`). **Latest news** goes back to Yahoo's feed.
 
 Windows are measured in trading days: 3m = 63, 6m = 126, 1y = 252, 3y = 756, 5y = 1260, 10y = 2520.
 
@@ -154,5 +156,5 @@ Get your admin key back with `fly ssh console -C 'printenv ADMIN_KEY'`, then ope
 
 Notes:
 - The machine auto-stops when idle, so the first request after a pause takes a few seconds.
-- Price history, the earnings date and news are cached in memory for an hour per ticker (`CACHE_TTL_SECONDS`), so headlines can be up to an hour old.
+- Price history, the earnings date and news are cached in memory for an hour per ticker (`CACHE_TTL_SECONDS`), so headlines can be up to an hour old. Dated news searches are cached the same way, per date range.
 - Tickers use Yahoo Finance symbols, e.g. `AAPL`, `SPY`, `D05.SI`, `0700.HK`.

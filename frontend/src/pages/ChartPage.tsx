@@ -9,12 +9,13 @@ import SmaCrossChart from "../components/SmaCrossChart";
 import SmaSummary from "../components/SmaSummary";
 import TickerForm from "../components/TickerForm";
 import TickerOverview from "../components/TickerOverview";
+import { newsWindow } from "../news";
 import { Strategy, STRATEGIES, STRATEGY_INFO } from "../strategies";
 import { isCovered, TODAY, View, viewEnd } from "../view";
 
 type Tab = "chart" | "news";
 
-function readQuery(): { ticker: string; period: Period; tab: Tab; strategy: Strategy } {
+function readQuery(): { ticker: string; period: Period; tab: Tab; strategy: Strategy; newsDate: string | null } {
   const q = new URLSearchParams(window.location.search);
   const period = q.get("period") as Period | null;
   const strategy = q.get("strategy") as Strategy | null;
@@ -23,6 +24,7 @@ function readQuery(): { ticker: string; period: Period; tab: Tab; strategy: Stra
     period: period && PERIODS.includes(period) ? period : "1y",
     tab: q.get("tab") === "news" ? "news" : "chart",
     strategy: strategy && STRATEGIES.includes(strategy) ? strategy : "candlestick",
+    newsDate: /^\d{4}-\d{2}-\d{2}$/.test(q.get("news_date") ?? "") ? q.get("news_date") : null,
   };
 }
 
@@ -44,12 +46,27 @@ export default function ChartPage() {
   const [period, setPeriod] = useState<Period>(initial.period);
   // Visible date range; null until the first load of a ticker sets it to the latest year.
   const [view, setView] = useState<View | null>(null);
+  // Trading day whose news the News tab shows; null shows the latest headlines.
+  const [newsDate, setNewsDate] = useState<string | null>(initial.newsDate);
   // Only the newest request may update the page, so slow responses can't overwrite fresh ones.
   const requestId = useRef(0);
+
+  const showNewsFor = (date: string | null) => {
+    setNewsDate(date);
+    setParam("news_date", date);
+  };
 
   const selectTab = (next: Tab) => {
     setTab(next);
     setParam("tab", next === "chart" ? null : next);
+    showNewsFor(null);
+  };
+
+  /** From the chart: jump to the News tab showing what was reported on `date`. */
+  const openNews = (date: string) => {
+    selectTab("news");
+    showNewsFor(date);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   const selectStrategy = (next: Strategy) => {
@@ -79,6 +96,7 @@ export default function ChartPage() {
 
   const loadTicker = (ticker: string) => {
     setView(null);
+    showNewsFor(null);
     load(ticker, period);
   };
 
@@ -127,7 +145,13 @@ export default function ChartPage() {
           </div>
           {tab === "news" ? (
             <div className="card news-card" role="tabpanel">
-              <NewsList ticker={data.ticker} />
+              <NewsList
+                ticker={data.ticker}
+                date={newsDate}
+                range={newsDate ? newsWindow(data.points.map((p) => p.date), newsDate) : null}
+                onShowLatest={() => showNewsFor(null)}
+                onBackToChart={() => selectTab("chart")}
+              />
             </div>
           ) : (
             <>
@@ -174,7 +198,7 @@ export default function ChartPage() {
                   </div>
                 )}
                 {strategy === "candlestick" ? (
-                  <CandlestickChart data={data} view={view} onViewChange={changeView} />
+                  <CandlestickChart data={data} view={view} onViewChange={changeView} onOpenNews={openNews} />
                 ) : strategy === "mean-reversion" ? (
                   <BandChart data={data} view={view} onViewChange={changeView} />
                 ) : (
