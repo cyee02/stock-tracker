@@ -309,6 +309,67 @@ def download_dated_news(query: str, start: dt.date, end: dt.date) -> list[NewsIt
     return sorted(items, key=lambda n: n.published_at or epoch, reverse=True)
 
 
+@dataclass
+class AnalystData:
+    """Wall Street consensus from Yahoo: rating, price targets and rating counts."""
+
+    recommendation: str | None = None  # Yahoo's recommendationKey, e.g. "buy"
+    analyst_count: int | None = None
+    current_price: float | None = None
+    target_low: float | None = None
+    target_mean: float | None = None
+    target_median: float | None = None
+    target_high: float | None = None
+    # This month's spread of ratings.
+    strong_buy: int | None = None
+    buy: int | None = None
+    hold: int | None = None
+    sell: int | None = None
+    strong_sell: int | None = None
+
+
+def _int(x) -> int | None:
+    v = _float(x)
+    return None if v is None else int(v)
+
+
+def download_analyst(ticker: str) -> AnalystData | None:
+    """Analyst consensus for a stock. Best effort: ETFs and funds have none, so None."""
+    t = yf.Ticker(ticker)
+    out = AnalystData()
+    try:
+        targets = t.analyst_price_targets or {}
+        out.current_price = _float(targets.get("current"))
+        out.target_low = _float(targets.get("low"))
+        out.target_mean = _float(targets.get("mean"))
+        out.target_median = _float(targets.get("median"))
+        out.target_high = _float(targets.get("high"))
+    except Exception as exc:
+        log.info("no price targets for %s: %s", ticker, exc)
+    try:
+        rec = t.recommendations_summary
+        if rec is not None and not rec.empty:
+            row = rec[rec["period"] == "0m"].iloc[0] if "period" in rec else rec.iloc[0]
+            out.strong_buy = _int(row.get("strongBuy"))
+            out.buy = _int(row.get("buy"))
+            out.hold = _int(row.get("hold"))
+            out.sell = _int(row.get("sell"))
+            out.strong_sell = _int(row.get("strongSell"))
+    except Exception as exc:
+        log.info("no recommendations for %s: %s", ticker, exc)
+    try:
+        info = t.info or {}
+        key = info.get("recommendationKey")
+        out.recommendation = key if key and key != "none" else None
+        out.analyst_count = _int(info.get("numberOfAnalystOpinions"))
+        out.current_price = out.current_price or _float(info.get("currentPrice"))
+    except Exception as exc:
+        log.info("no quote summary for %s: %s", ticker, exc)
+    if out.recommendation is None and out.target_mean is None and out.buy is None:
+        return None
+    return out
+
+
 class TTLCache:
     """Per-ticker in-memory cache in front of a slow Yahoo loader."""
 

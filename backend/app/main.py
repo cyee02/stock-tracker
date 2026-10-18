@@ -6,8 +6,16 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import Settings, get_settings
 from app.db import Database
-from app.market import HistoryCache, TTLCache, download_dated_news, download_history, download_news
-from app.routes import admin, series
+from app.market import (
+    HistoryCache,
+    TTLCache,
+    download_analyst,
+    download_dated_news,
+    download_history,
+    download_news,
+)
+from app.routes import admin, series, summaries
+from app.summary import SummaryCache, run_claude
 
 
 def create_app(
@@ -15,6 +23,8 @@ def create_app(
     loader=download_history,
     news_loader=download_news,
     dated_news_loader=download_dated_news,
+    analyst_loader=download_analyst,
+    summarizer=None,
 ) -> FastAPI:
     settings = settings or get_settings()
     app = FastAPI(title="Stock Tracker", docs_url=None, redoc_url=None, openapi_url=None)
@@ -24,12 +34,25 @@ def create_app(
     app.state.news = TTLCache(settings.cache_ttl_seconds, news_loader)
     # Keyed by (search query, start, end).
     app.state.dated_news = TTLCache(settings.cache_ttl_seconds, lambda key: dated_news_loader(*key))
+    app.state.analyst = TTLCache(settings.cache_ttl_seconds, analyst_loader)
+    # Keyed by (ticker, range key); see app.summary.range_key.
+    app.state.summaries = SummaryCache(settings.summary_ttl_seconds)
+    # prompt -> {"summary": ..., "model": ...}
+    app.state.summarizer = summarizer or (
+        lambda prompt: run_claude(
+            prompt,
+            cli=settings.claude_cli,
+            model=settings.claude_model,
+            timeout=settings.claude_timeout_seconds,
+        )
+    )
 
     @app.get("/healthz")
     def healthz():
         return {"ok": True}
 
     app.include_router(series.router)
+    app.include_router(summaries.router)
     app.include_router(admin.router)
 
     static_dir = os.path.abspath(settings.static_dir)

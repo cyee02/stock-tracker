@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from app.auth import Viewer, require_viewer
 from app.market import (
     PERIOD_WINDOWS,
+    NewsItem,
     RETURN_PERIODS,
     SMA_FAST,
     SMA_SLOW,
@@ -160,6 +161,32 @@ def returns(
 NEWS_MAX_DAYS = 3660
 
 
+def _check_range(start: dt.date | None, end: dt.date | None) -> None:
+    if (start is None) != (end is None):
+        raise HTTPException(422, "start and end must be given together")
+    if start is not None:
+        if end < start:
+            raise HTTPException(422, "end must not be before start")
+        if (end - start).days > NEWS_MAX_DAYS:
+            raise HTTPException(422, f"date range must be at most {NEWS_MAX_DAYS} days")
+
+
+def _news_items(request: Request, ticker: str, start: dt.date | None, end: dt.date | None) -> list[NewsItem]:
+    """Yahoo's latest headlines, or Google News for a date range."""
+    if start is not None:
+        # The name comes from whatever the chart already loaded; no extra Yahoo call.
+        cached = request.app.state.history.peek(ticker)
+        query = news_query(ticker, cached.info.name if cached else None)
+        try:
+            return request.app.state.dated_news.get((query, start, end))
+        except Exception as exc:  # network errors, rate limiting, malformed feed
+            raise HTTPException(502, f"Could not fetch news from Google News: {exc}")
+    try:
+        return request.app.state.news.get(ticker)
+    except Exception as exc:  # network errors, Yahoo rate limiting, etc.
+        raise HTTPException(502, f"Could not fetch news from Yahoo Finance: {exc}")
+
+
 @router.get("/news")
 def news(
     request: Request,
@@ -169,25 +196,8 @@ def news(
     _: Viewer = Depends(require_viewer),
 ):
     ticker = ticker.strip().upper()
-    if (start is None) != (end is None):
-        raise HTTPException(422, "start and end must be given together")
-    if start is not None:
-        if end < start:
-            raise HTTPException(422, "end must not be before start")
-        if (end - start).days > NEWS_MAX_DAYS:
-            raise HTTPException(422, f"date range must be at most {NEWS_MAX_DAYS} days")
-        # The name comes from whatever the chart already loaded; no extra Yahoo call.
-        cached = request.app.state.history.peek(ticker)
-        query = news_query(ticker, cached.info.name if cached else None)
-        try:
-            items = request.app.state.dated_news.get((query, start, end))
-        except Exception as exc:  # network errors, rate limiting, malformed feed
-            raise HTTPException(502, f"Could not fetch news from Google News: {exc}")
-    else:
-        try:
-            items = request.app.state.news.get(ticker)
-        except Exception as exc:  # network errors, Yahoo rate limiting, etc.
-            raise HTTPException(502, f"Could not fetch news from Yahoo Finance: {exc}")
+    _check_range(start, end)
+    items = _news_items(request, ticker, start, end)
     return {
         "ticker": ticker,
         "start": _iso(start),
