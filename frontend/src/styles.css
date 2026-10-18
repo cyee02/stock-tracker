@@ -190,3 +190,102 @@ tr.revoked td { color: var(--fg-muted); }
 .news-header h2 { margin: 0; font-size: 17px; }
 .news-header p { margin: 2px 0 0; font-size: 13px; }
 .news-actions { display: inline-flex; gap: 16px; padding-top: 3px; }
+
+/* AI news summary */
+.badge-neutral, .badge-hold { background: var(--neutral-bg); color: var(--neutral-fg); }
+.badge-mixed { background: #fef3c7; color: #92400e; }
+.badge-buy { background: var(--ok-bg); color: var(--ok-fg); }
+.badge-sell { background: var(--warn-bg); color: var(--warn-fg); }
+@media (prefers-color-scheme: dark) { .badge-mixed { background: #3a2c0c; color: #fcd34d; } }
+
+.ai-card { margin: 12px 0 4px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); }
+.ai-title { margin: 0 0 10px; font-size: 16px; }
+.ai-spark { color: var(--accent); }
+.ai-empty { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.ai-empty p { margin: 0; flex: 1 1 280px; }
+.ai-working { display: flex; align-items: center; gap: 10px; margin: 0; }
+.spinner { width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; flex-shrink: 0; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.ai-summary section { margin-top: 16px; }
+.ai-summary h3 { margin: 0 0 6px; font-size: 13px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.04em; color: var(--fg-muted); }
+.ai-summary p { margin: 4px 0 0; font-size: 14px; }
+.ai-verdicts { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.ai-verdict { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+.ai-verdict .badge { display: inline-block; margin-top: 4px; }
+.ai-label { display: block; font-size: 12px; color: var(--fg-muted); }
+.ai-happenings { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.ai-happenings li { display: flex; gap: 10px; align-items: flex-start; }
+.ai-happenings strong { font-size: 15px; }
+.ai-dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 6px; flex-shrink: 0; background: var(--fg-muted); }
+.impact-positive { background: var(--c-up); }
+.impact-negative { background: var(--c-down); }
+.ai-sources { display: inline-flex; flex-wrap: wrap; gap: 4px 8px; font-size: 12px; }
+.ai-cases { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 0 16px; }
+.ai-case { border-left: 3px solid var(--border); padding-left: 10px; }
+.ai-case.bull { border-left-color: var(--c-up); }
+.ai-case.bear { border-left-color: var(--c-down); }
+.ai-list { margin: 0; padding-left: 18px; font-size: 14px; }
+.ai-list li + li { margin-top: 2px; }
+.ai-stats { margin: 4px 0 8px; }
+.ai-stats dd { font-size: 17px; text-transform: capitalize; }
+.ai-stats dd.ai-small, .ai-stats dd.ai-range { font-size: 15px; text-transform: none; }
+.ai-ratings { display: flex; height: 18px; border-radius: 4px; overflow: hidden; font-size: 11px; font-weight: 600; margin-bottom: 4px; }
+.ai-rating { display: flex; align-items: center; justify-content: center; color: #fff; min-width: 18px; }
+.ai-rating.r0 { background: #15803d; }
+.ai-rating.r1 { background: #4ade80; color: #14532d; }
+.ai-rating.r2 { background: #9ca3af; color: #1f2937; }
+.ai-rating.r3 { background: #f87171; color: #450a0a; }
+.ai-rating.r4 { background: #b91c1c; }
+.ai-footer { display: flex; justify-content: space-between; align-items: center; gap: 8px 16px; flex-wrap: wrap; margin-top: 16px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 13px; }
+.ai-status { display: inline-flex; align-items: center; gap: 6px 14px; flex-wrap: wrap; }
+.ai-save { padding: 4px 12px; font-size: 13px; }
+.saved-tag { color: var(--ok-fg); font-weight: 600; }
+
+.saved-list { list-style: none; margin: 8px 0 0; padding: 0; }
+.saved-list > li { padding: 10px 0; border-bottom: 1px solid var(--border); }
+.saved-list > li:last-child { border-bottom: none; }
+.saved-list > li.open .ai-summary { padding: 4px 0 6px 22px; }
+.saved-row { display: flex; justify-content: space-between; align-items: center; gap: 8px 16px; flex-wrap: wrap; }
+.saved-toggle { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; background: none; border: none; padding: 0; color: var(--fg); font-weight: 500; text-align: left; }
+.saved-caret { width: 14px; color: var(--fg-muted); }
+.saved-when { font-size: 13px; }
+.saved-actions { display: inline-flex; gap: 16px; }
+.danger-link { color: var(--warn-fg); }
+
+/* Top navigation and the AI Summaries page */
+.nav { display: inline-flex; align-items: baseline; gap: 20px; flex-wrap: wrap; }
+.nav-links { display: inline-flex; gap: 4px; }
+.nav-links a { padding: 4px 10px; border-radius: 8px; color: var(--fg-muted); font-size: 14px; font-weight: 550; }
+.nav-links a:hover { background: var(--neutral-bg); text-decoration: none; }
+.nav-links a.active { background: var(--neutral-bg); color: var(--fg); }
+.sum-head { margin-bottom: 12px; }
+.sum-head h1 { margin: 0; font-size: 22px; }
+.sum-head p { margin: 2px 0 0; font-size: 14px; }
+.sum-filter { margin-bottom: 12px; }
+.summaries-page .card h2 { margin-bottom: 4px; }
+.sum-sub { font-size: 13px; }
+.sum-ticker { font-weight: 700; font-size: 13px; padding: 2px 8px; border-radius: 6px; background: var(--neutral-bg); color: var(--fg); }
+.sum-link { font-size: 13px; font-weight: 500; }
+.sum-error { margin: 0; font-size: 13px; }
+.sum-empty { margin: 8px 0 0; font-size: 14px; }
+.saved-toggle.static { cursor: default; padding-left: 22px; }
+.ai-refreshing { display: inline-flex; align-items: center; gap: 6px; }
+.ai-working p { margin: 0; }
+.ai-working .muted { font-size: 13px; margin-top: 2px; }
+
+/* AI summary: one-liner, analyst view and per-chart price context */
+.ai-one-liner { font-size: 16px !important; font-weight: 600; line-height: 1.4; margin-top: 6px !important; }
+.ai-stance { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ai-price-top { margin-bottom: 12px; }
+.ai-ohlc { gap: 4px 22px; margin: 0; }
+.ai-ohlc dd.ai-close { font-size: 18px; }
+.ai-charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.ai-chart { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+.ai-chart h4 { margin: 0 0 6px; font-size: 14px; }
+.ai-chart .badge { display: inline-block; font-size: 12px; padding: 2px 10px; }
+.ai-mini { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 8px 0 0; }
+.ai-mini dt { font-size: 12px; color: var(--fg-muted); }
+.ai-mini dd { margin: 0; font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ai-points { margin: 8px 0 0; padding-left: 18px; font-size: 13px; }
+.ai-points li + li { margin-top: 3px; }

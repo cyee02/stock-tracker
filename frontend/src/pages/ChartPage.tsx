@@ -36,7 +36,7 @@ function setParam(key: string, value: string | null) {
   window.history.replaceState(null, "", url.pathname + url.search);
 }
 
-export default function ChartPage() {
+export default function ChartPage({ isAdmin }: { isAdmin: boolean }) {
   const initial = readQuery();
   const [data, setData] = useState<SeriesResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -151,6 +151,7 @@ export default function ChartPage() {
                 range={newsDate ? newsWindow(data.points.map((p) => p.date), newsDate) : null}
                 onShowLatest={() => showNewsFor(null)}
                 onBackToChart={() => selectTab("chart")}
+                isAdmin={isAdmin}
               />
             </div>
           ) : (

@@ -20,6 +20,31 @@ For stocks, the overview card also shows the **next earnings date** from Yahoo's
 
 Below the overview, two tabs switch between **Charts** and **News**. The News tab lists the latest headlines Yahoo Finance has for the ticker (via `yfinance`), newest first, with publisher, age, a short summary and a link to the full article. The selected tab is kept in the URL (`?tab=news`), so a link can open straight to the news. Clicking a day on the candlestick chart shows that day's headlines instead, from Google News, because Yahoo only keeps the latest stories; the date is kept in the URL too (`?tab=news&news_date=2024-08-01`). **Latest news** goes back to Yahoo's feed.
 
+## AI news summary
+
+Above the headlines, **Summarize with Claude** asks Claude to read the news on screen (Yahoo's latest, or the chart day you clicked). Claude opens the most relevant articles, up to six, and writes a briefing:
+
+- the **one-sentence takeaway**, next to the **sentiment of analysts and investors** (bullish / bearish / neutral / mixed, with a score from −1 to +1)
+- the **top 3 happenings**, each marked positive, negative or neutral, with source links
+- **bull and bear cases**, **risks**, and **catalysts** (including the next earnings date)
+- **analyst consensus**: Claude's **buy / hold / sell** view with a confidence level, horizon and rationale, shown with Yahoo's real rating, analyst count, rating spread, and low/mean/high price targets with the upside to the mean
+- **price context**: a top row with the close, the day's % change, open/high/low and returns, and Claude's read of the recent price action below it (Claude gets the last 10 daily candles). Then two panels: **Mean reversion (1y)** with the 25th/75th percentile band and average, and **50/200 SMA** with both averages and the last cross. Claude's bullet points add only insight and never repeat the figures already shown. For a past day, prices are as of that day.
+
+Summaries saved before this layout still display: they have no one-line takeaway, and their price context stays a paragraph.
+
+It runs only when you click, as a **background job on the server**. You can leave the page, open another ticker or close the tab, and the run keeps going. The page polls for the result and shows a spinner with the elapsed time. Clicking again while a run is going joins it instead of starting a second one. At most two runs go at once, and others wait their turn. A run that's still going is lost if the server restarts.
+
+A result is cached for an hour per ticker and date range, whether or not you save it. **Save** keeps it in the database, and **Refresh** asks Claude again. Opening the same ticker and day later shows the saved copy, with no new Claude call. A refreshed copy shows as *New version, not saved* until you save it, which replaces the old copy. Saved summaries for Latest news are kept per day, because that feed changes daily.
+
+**✦ AI Summaries** in the top bar (`/summaries`) shows every summary without loading a ticker first. It lists runs **in progress** (failed ones get a *Try again* link), results **not saved yet** (still in the 1-hour cache, with a **Save** button), and **saved** summaries, across all tickers, with a ticker filter. Expand any one to read it, or open the headlines it was made from. Only the owner can generate, save or delete summaries; share-link viewers can read the saved and cached ones.
+
+**It uses your Claude subscription, not an API key.** The backend runs the Claude Code CLI headless (`claude -p`), so usage counts against the Pro/Max plan the CLI is logged in with. Claude gets only the WebFetch tool (no shell, files or MCP servers), and `ANTHROPIC_API_KEY` is removed from the CLI's environment so it can't take over. A summary takes about a minute. Setup:
+
+1. Install Claude Code (`curl -fsSL https://claude.ai/install.sh | bash`) and run `claude` once to log in. Without it on PATH, the app falls back to the copy bundled with the VS Code extension.
+2. Optional settings in `.env`: `CLAUDE_CLI` (path to the binary), `CLAUDE_MODEL` (e.g. `sonnet` or `opus`; the CLI's default otherwise), `CLAUDE_TIMEOUT_SECONDS` (default 240), `SUMMARY_TTL_SECONDS` (default 3600).
+
+The Fly.io image has no logged-in CLI, so summaries there return "Claude CLI not found". Saved summaries still display.
+
 Windows are measured in trading days: 3m = 63, 6m = 126, 1y = 252, 3y = 756, 5y = 1260, 10y = 2520.
 
 ## Access control
@@ -52,7 +77,8 @@ sessions, rotate `ADMIN_KEY` and revoke all links.
 ## Project layout
 
 ```
-backend/   FastAPI app (yfinance data, bands, SQLite share links) + pytest tests
+backend/   FastAPI app (yfinance data, bands, SQLite share links and saved AI
+           summaries, Claude CLI summarizer in app/summary.py) + pytest tests
 frontend/  React + TypeScript + Vite, Plotly chart
 scripts/   dev.sh — local setup and run; restart.sh — restart on the current branch;
            tailscale.sh — serve to your tailnet

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, DateRange, NewsItem } from "../api";
 import { formatDay, formatRelative } from "../format";
+import NewsSummary from "./NewsSummary";
 
 type State = { kind: "loading" } | { kind: "error"; message: string } | { kind: "ok"; items: NewsItem[] };
 
@@ -12,9 +13,11 @@ interface Props {
   date?: string | null;
   onShowLatest?: () => void;
   onBackToChart?: () => void;
+  /** Owner: may generate and save AI summaries. */
+  isAdmin?: boolean;
 }
 
-export default function NewsList({ ticker, range, date, onShowLatest, onBackToChart }: Props) {
+export default function NewsList({ ticker, range, date, onShowLatest, onBackToChart, isAdmin = false }: Props) {
   const [state, setState] = useState<State>({ kind: "loading" });
   const rangeKey = range ? `${range.start}:${range.end}` : "";
 
@@ -102,6 +105,9 @@ export default function NewsList({ ticker, range, date, onShowLatest, onBackToCh
   return (
     <>
       {header}
+      {state.kind === "ok" && state.items.length > 0 && (
+        <NewsSummary ticker={ticker} range={range ?? null} isAdmin={isAdmin} />
+      )}
       {body}
     </>
   );

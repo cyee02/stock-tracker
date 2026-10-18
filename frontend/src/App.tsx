@@ -3,6 +3,7 @@ import { api, ApiError, Me } from "./api";
 import { captureTokenFromUrl, clearToken, getToken } from "./auth";
 import ChartPage from "./pages/ChartPage";
 import AdminPage from "./pages/AdminPage";
+import SummariesPage from "./pages/SummariesPage";
 
 captureTokenFromUrl();
 
@@ -10,7 +11,9 @@ type State = { kind: "loading" } | { kind: "denied"; message: string } | { kind:
 
 export default function App() {
   const [state, setState] = useState<State>({ kind: "loading" });
-  const isAdminRoute = window.location.pathname.replace(/\/+$/, "") === "/admin";
+  const path = window.location.pathname.replace(/\/+$/, "");
+  const isAdminRoute = path === "/admin";
+  const isSummariesRoute = path === "/summaries";
 
   // Always ask the server who we are. Behind Tailscale there is no token to
   // check locally -- the tailnet identifies us -- so only the server can say.
@@ -36,9 +39,21 @@ export default function App() {
   return (
     <div className="shell">
       <header className="topbar">
-        <a href="/" className="brand">
-          Stock Tracker
-        </a>
+        <span className="nav">
+          <a href="/" className="brand">
+            Stock Tracker
+          </a>
+          {state.kind === "ok" && (
+            <span className="nav-links">
+              <a href="/" className={isSummariesRoute ? "" : "active"}>
+                Charts
+              </a>
+              <a href="/summaries" className={isSummariesRoute ? "active" : ""}>
+                ✦ AI Summaries
+              </a>
+            </span>
+          )}
+        </span>
         {state.kind === "ok" && (
           <span className="who">
             {state.me.name}
@@ -59,7 +74,12 @@ export default function App() {
           <p className="muted">Ask the owner for a share link.</p>
         </div>
       )}
-      {state.kind === "ok" && <ChartPage />}
+      {state.kind === "ok" &&
+        (isSummariesRoute ? (
+          <SummariesPage isAdmin={state.me.role === "admin"} />
+        ) : (
+          <ChartPage isAdmin={state.me.role === "admin"} />
+        ))}
     </div>
   );
 }
