@@ -24,6 +24,8 @@ class Settings:
     claude_model: str | None = None
     claude_timeout_seconds: int = 240
     summary_ttl_seconds: int = 3600
+    # How often the price-alert checker runs; 0 turns it off (as in tests).
+    alert_interval_seconds: int = 0
 
 
 def _flag(name: str) -> bool:
@@ -70,4 +72,5 @@ def get_settings() -> Settings:
         claude_model=os.environ.get("CLAUDE_MODEL", "").strip() or None,
         claude_timeout_seconds=int(os.environ.get("CLAUDE_TIMEOUT_SECONDS", "240")),
         summary_ttl_seconds=int(os.environ.get("SUMMARY_TTL_SECONDS", "3600")),
+        alert_interval_seconds=int(os.environ.get("ALERT_INTERVAL_SECONDS", "300")),
     )

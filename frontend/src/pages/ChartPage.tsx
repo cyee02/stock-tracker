@@ -3,17 +3,21 @@ import { api, Period, PERIOD_LABELS, PERIODS, SeriesResponse } from "../api";
 import CandlestickChart from "../components/CandlestickChart";
 import BandChart from "../components/BandChart";
 import CandleSummary from "../components/CandleSummary";
+import FinancialsTab from "../components/FinancialsTab";
 import NewsList from "../components/NewsList";
 import SignalBadge from "../components/SignalBadge";
 import SmaCrossChart from "../components/SmaCrossChart";
 import SmaSummary from "../components/SmaSummary";
 import TickerForm from "../components/TickerForm";
 import TickerOverview from "../components/TickerOverview";
+import WatchButton from "../components/WatchButton";
 import { newsWindow } from "../news";
 import { Strategy, STRATEGIES, STRATEGY_INFO } from "../strategies";
 import { isCovered, TODAY, View, viewEnd } from "../view";
 
-type Tab = "chart" | "news";
+type Tab = "chart" | "financials" | "news";
+
+const TAB_LABELS: Record<Tab, string> = { chart: "Charts", financials: "Financials", news: "News" };
 
 function readQuery(): { ticker: string; period: Period; tab: Tab; strategy: Strategy; newsDate: string | null } {
   const q = new URLSearchParams(window.location.search);
@@ -22,7 +26,7 @@ function readQuery(): { ticker: string; period: Period; tab: Tab; strategy: Stra
   return {
     ticker: (q.get("ticker") ?? "").toUpperCase(),
     period: period && PERIODS.includes(period) ? period : "1y",
-    tab: q.get("tab") === "news" ? "news" : "chart",
+    tab: q.get("tab") === "news" ? "news" : q.get("tab") === "financials" ? "financials" : "chart",
     strategy: strategy && STRATEGIES.includes(strategy) ? strategy : "candlestick",
     newsDate: /^\d{4}-\d{2}-\d{2}$/.test(q.get("news_date") ?? "") ? q.get("news_date") : null,
   };
@@ -36,8 +40,18 @@ function setParam(key: string, value: string | null) {
   window.history.replaceState(null, "", url.pathname + url.search);
 }
 
-export default function ChartPage({ isAdmin }: { isAdmin: boolean }) {
+interface Props {
+  isAdmin: boolean;
+  /** False while another page is showing; the chart page stays mounted underneath. */
+  active: boolean;
+  /** Changes on every in-app navigation; the URL may then ask for another ticker. */
+  navCount: number;
+}
+
+export default function ChartPage({ isAdmin, active, navCount }: Props) {
   const initial = readQuery();
+  // Ticker last asked for, shown in the form even before its prices arrive.
+  const [ticker, setTicker] = useState(initial.ticker);
   const [data, setData] = useState<SeriesResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -77,6 +91,7 @@ export default function ChartPage({ isAdmin }: { isAdmin: boolean }) {
   /** Fetch prices from `start` (default: the latest year) and keep the current view, if any. */
   const load = useCallback((ticker: string, period: Period, start?: string) => {
     const id = ++requestId.current;
+    setTicker(ticker);
     setLoading(true);
     setError(null);
     const url = new URL(window.location.href);
@@ -118,32 +133,60 @@ export default function ChartPage({ isAdmin }: { isAdmin: boolean }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Arriving from another page (a watchlist row, a summary's headlines link, or
+  // the Charts tab): take the ticker and tab from the URL.
+  useEffect(() => {
+    if (navCount === 0 || !active) return;
+    const q = readQuery();
+    if (!q.ticker) return;
+    setTab(q.tab);
+    setStrategy(q.strategy);
+    setNewsDate(q.newsDate);
+    if (q.ticker !== ticker) {
+      setView(null);
+      load(q.ticker, period);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navCount]);
+
   const crossesInView =
     data && view && isCovered(view, data.start, data.first_date)
       ? data.sma.crosses.filter((c) => c.date >= view.start && c.date <= viewEnd(view, data.latest.date)).length
       : "…";
 
+  // Only stocks have financial statements; ETFs, funds and indices fall back to the chart.
+  const isStock = data?.info.quote_type === "EQUITY";
+  const tabs: Tab[] = isStock ? ["chart", "financials", "news"] : ["chart", "news"];
+  const shownTab: Tab = tab === "financials" && !isStock ? "chart" : tab;
+
   return (
     <main>
-      <TickerForm initialTicker={initial.ticker} loading={loading} onSubmit={loadTicker} />
+      <TickerForm
+        initialTicker={ticker}
+        loading={loading}
+        onSubmit={loadTicker}
+        extra={isAdmin && data && <WatchButton ticker={data.ticker} />}
+      />
       {error && <div className="card error">{error}</div>}
       {data && view && (
         <>
           <TickerOverview data={data} />
           <div className="tabs" role="tablist">
-            {(["chart", "news"] as const).map((t) => (
+            {tabs.map((t) => (
               <button
                 key={t}
                 role="tab"
-                aria-selected={tab === t}
-                className={`tab${tab === t ? " active" : ""}`}
+                aria-selected={shownTab === t}
+                className={`tab${shownTab === t ? " active" : ""}`}
                 onClick={() => selectTab(t)}
               >
-                {t === "chart" ? "Charts" : "News"}
+                {TAB_LABELS[t]}
               </button>
             ))}
           </div>
-          {tab === "news" ? (
+          {shownTab === "financials" ? (
+            <FinancialsTab ticker={data.ticker} />
+          ) : shownTab === "news" ? (
             <div className="card news-card" role="tabpanel">
               <NewsList
                 ticker={data.ticker}

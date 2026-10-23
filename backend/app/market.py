@@ -370,6 +370,174 @@ def download_analyst(ticker: str) -> AnalystData | None:
     return out
 
 
+# Output key -> Yahoo row names to try, in order. Banks report no gross profit
+# or operating income, and some companies only fill one of two near-synonyms.
+INCOME_ROWS: dict[str, list[str]] = {
+    "revenue": ["Total Revenue", "Operating Revenue"],
+    "cost_of_revenue": ["Cost Of Revenue", "Reconciled Cost Of Revenue"],
+    "gross_profit": ["Gross Profit"],
+    "r_and_d": ["Research And Development"],
+    "sga": ["Selling General And Administration"],
+    "operating_expense": ["Operating Expense"],
+    "operating_income": ["Operating Income", "Total Operating Income As Reported"],
+    "net_interest_income": ["Net Interest Income"],
+    "pretax_income": ["Pretax Income"],
+    "tax": ["Tax Provision"],
+    "net_income": ["Net Income", "Net Income Common Stockholders"],
+    "ebitda": ["EBITDA", "Normalized EBITDA"],
+    "diluted_eps": ["Diluted EPS", "Basic EPS"],
+}
+CASHFLOW_ROWS: dict[str, list[str]] = {
+    "operating_cf": ["Operating Cash Flow", "Cash Flow From Continuing Operating Activities"],
+    "capex": ["Capital Expenditure", "Purchase Of PPE"],
+    "free_cf": ["Free Cash Flow"],
+    "buybacks": ["Repurchase Of Capital Stock", "Common Stock Payments"],
+    "dividends_paid": ["Cash Dividends Paid", "Common Stock Dividend Paid"],
+    "sbc": ["Stock Based Compensation"],
+}
+BALANCE_ROWS: dict[str, list[str]] = {
+    "cash": ["Cash Cash Equivalents And Short Term Investments", "Cash And Cash Equivalents", "Cash Financial"],
+    "total_debt": ["Total Debt"],
+    "total_assets": ["Total Assets"],
+    "total_liabilities": ["Total Liabilities Net Minority Interest"],
+    "equity": ["Stockholders Equity", "Common Stock Equity"],
+    "current_assets": ["Current Assets"],
+    "current_liabilities": ["Current Liabilities"],
+}
+
+# Output key -> Yahoo `info` key. Percent-like values are fractions (0.27 = 27%).
+RATIO_KEYS: dict[str, str] = {
+    "trailing_pe": "trailingPE",
+    "forward_pe": "forwardPE",
+    "peg": "trailingPegRatio",
+    "price_to_book": "priceToBook",
+    "price_to_sales": "priceToSalesTrailing12Months",
+    "ev_to_ebitda": "enterpriseToEbitda",
+    "gross_margin": "grossMargins",
+    "operating_margin": "operatingMargins",
+    "net_margin": "profitMargins",
+    "roe": "returnOnEquity",
+    "roa": "returnOnAssets",
+    "revenue_growth": "revenueGrowth",
+    "earnings_growth": "earningsGrowth",
+    "debt_to_equity": "debtToEquity",
+    "current_ratio": "currentRatio",
+    "quick_ratio": "quickRatio",
+    "free_cash_flow": "freeCashflow",
+    "dividend_yield": "dividendYield",
+    "payout_ratio": "payoutRatio",
+    "beta": "beta",
+    "market_cap": "marketCap",
+}
+# Yahoo sends these as percentages (78.4 = 78.4%) rather than fractions.
+PERCENT_RATIOS = ("debt_to_equity", "dividend_yield")
+
+
+@dataclass
+class Financials:
+    # Each period: {"income": [...], "cashflow": [...], "balance": [...]}, oldest first.
+    quarterly: dict[str, list[dict]]
+    annual: dict[str, list[dict]]
+    eps_history: list[dict]
+    ratios: dict[str, float | None]
+    currency: str | None = None
+
+
+def _statement(df: pd.DataFrame | None, rows: dict[str, list[str]]) -> list[dict]:
+    """A Yahoo statement (rows = line items, columns = period ends) as oldest-first records."""
+    if df is None or df.empty:
+        return []
+    picked = {key: next((n for n in names if n in df.index), None) for key, names in rows.items()}
+    out = []
+    for col in sorted(df.columns):
+        rec = {"period": pd.Timestamp(col).date().isoformat()}
+        for key, name in picked.items():
+            rec[key] = _float(df.at[name, col]) if name else None
+        # Columns Yahoo lists but hasn't filled yet carry no data at all.
+        if any(v is not None for k, v in rec.items() if k != "period"):
+            out.append(rec)
+    return out
+
+
+def _ratio(num: float | None, den: float | None) -> float | None:
+    return num / den if num is not None and den else None
+
+
+def add_margins(income: list[dict]) -> list[dict]:
+    for rec in income:
+        rev = rec.get("revenue")
+        rec["gross_margin"] = _ratio(rec.get("gross_profit"), rev)
+        rec["operating_margin"] = _ratio(rec.get("operating_income"), rev)
+        rec["net_margin"] = _ratio(rec.get("net_income"), rev)
+    return income
+
+
+def normalize_ratios(info: dict) -> dict[str, float | None]:
+    out = {key: _float(info.get(src)) for key, src in RATIO_KEYS.items()}
+    if out["peg"] is None:
+        out["peg"] = _float(info.get("pegRatio"))
+    for key in PERCENT_RATIOS:
+        if out[key] is not None:
+            out[key] /= 100
+    return out
+
+
+def _statements(t: yf.Ticker, ticker: str, quarterly: bool) -> dict[str, list[dict]]:
+    prefix = "quarterly_" if quarterly else ""
+    out = {}
+    for key, attr, rows in (
+        ("income", "income_stmt", INCOME_ROWS),
+        ("cashflow", "cashflow", CASHFLOW_ROWS),
+        ("balance", "balance_sheet", BALANCE_ROWS),
+    ):
+        try:
+            out[key] = _statement(getattr(t, prefix + attr), rows)
+        except Exception as exc:
+            log.info("no %s%s for %s: %s", prefix, attr, ticker, exc)
+            out[key] = []
+    add_margins(out["income"])
+    return out
+
+
+def download_financials(ticker: str) -> Financials | None:
+    """Statements, EPS surprises and ratios for a stock. None for ETFs, funds and the like."""
+    t = yf.Ticker(ticker)
+    quarterly = _statements(t, ticker, quarterly=True)
+    annual = _statements(t, ticker, quarterly=False)
+    if not any(
+        r.get("revenue") is not None or r.get("net_income") is not None
+        for r in quarterly["income"] + annual["income"]
+    ):
+        return None
+    eps = []
+    try:
+        eh = t.earnings_history
+        if eh is not None and not eh.empty:
+            for idx, row in eh.sort_index().iterrows():
+                eps.append(
+                    {
+                        "quarter": pd.Timestamp(idx).date().isoformat(),
+                        "actual": _float(row.get("epsActual")),
+                        "estimate": _float(row.get("epsEstimate")),
+                        "surprise": _float(row.get("surprisePercent")),
+                    }
+                )
+    except Exception as exc:
+        log.info("no earnings history for %s: %s", ticker, exc)
+    info = {}
+    try:
+        info = t.info or {}
+    except Exception as exc:
+        log.info("no quote summary for %s: %s", ticker, exc)
+    return Financials(
+        quarterly=quarterly,
+        annual=annual,
+        eps_history=eps,
+        ratios=normalize_ratios(info),
+        currency=info.get("financialCurrency") or info.get("currency"),
+    )
+
+
 class TTLCache:
     """Per-ticker in-memory cache in front of a slow Yahoo loader."""
 
@@ -520,3 +688,38 @@ def compute_returns(close: pd.Series) -> list[dict]:
                 annualized = float((1 + total) ** (1 / years) - 1)
         out.append({"period": label, "total": total, "annualized": annualized})
     return out
+
+
+WATCH_WINDOW = PERIOD_WINDOWS["1y"]
+
+
+def watch_snapshot(history: History) -> dict:
+    """Latest session, 1y mean-reversion signal and 50/200 SMA trend for a watchlist row."""
+    close = history.close.dropna()
+    df = compute_bands(close, WATCH_WINDOW).join(compute_smas(close))
+    last = df.iloc[-1]
+    crosses = find_crosses(df["sma_fast"], df["sma_slow"])
+    ohlc = {"open": None, "high": None, "low": None}
+    if history.ohlc is not None and close.index[-1] in history.ohlc.index:
+        row = history.ohlc.loc[close.index[-1]]
+        ohlc = {k: _float(row.get(k.capitalize())) for k in ohlc}
+    prev = _float(close.iloc[-2]) if len(close) > 1 else None
+    cur = _float(last["close"])
+    p25, p75 = _float(last["p25"]), _float(last["p75"])
+    return {
+        "date": close.index[-1].date().isoformat(),
+        **ohlc,
+        "close": cur,
+        "prev_close": prev,
+        "change_pct": (cur / prev - 1) if cur is not None and prev else None,
+        "ma": _float(last["ma"]),
+        "p25": p25,
+        "p75": p75,
+        "signal": classify(cur, p25, p75) if None not in (cur, p25, p75) else None,
+        "sma50": _float(last["sma_fast"]),
+        "sma200": _float(last["sma_slow"]),
+        "trend": sma_trend(last["sma_fast"], last["sma_slow"]),
+        "last_cross": (
+            {"date": crosses[-1]["date"].date().isoformat(), "kind": crosses[-1]["kind"]} if crosses else None
+        ),
+    }

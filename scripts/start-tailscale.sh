@@ -27,7 +27,7 @@ if [ ! -d frontend/node_modules ]; then
   echo "==> Installing frontend dependencies"
   (cd frontend && npm install --silent)
 fi
-if [ ! -f frontend/dist/index.html ] || [ -n "$(find frontend/src frontend/index.html -newer frontend/dist/index.html 2>/dev/null)" ]; then
+if [ ! -f frontend/dist/index.html ] || [ -n "$(find frontend/src frontend/public frontend/index.html -newer frontend/dist/index.html 2>/dev/null)" ]; then
   echo "==> Building frontend"
   (cd frontend && npm run build)
 fi

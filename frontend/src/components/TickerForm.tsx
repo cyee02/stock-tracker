@@ -1,13 +1,17 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, ReactNode, useEffect, useState } from "react";
 
 interface Props {
   initialTicker: string;
   loading: boolean;
   onSubmit: (ticker: string) => void;
+  /** Shown after the Plot button, e.g. the Add to Watchlist button. */
+  extra?: ReactNode;
 }
 
-export default function TickerForm({ initialTicker, loading, onSubmit }: Props) {
+export default function TickerForm({ initialTicker, loading, onSubmit, extra }: Props) {
   const [ticker, setTicker] = useState(initialTicker);
+  // A ticker opened from elsewhere (e.g. the watchlist) replaces what's typed.
+  useEffect(() => setTicker(initialTicker), [initialTicker]);
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -32,6 +36,7 @@ export default function TickerForm({ initialTicker, loading, onSubmit }: Props) 
       <button type="submit" disabled={loading}>
         {loading ? "Loading…" : "Plot"}
       </button>
+      {extra}
     </form>
   );
 }

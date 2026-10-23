@@ -29,6 +29,47 @@ CREATE TABLE IF NOT EXISTS saved_summaries (
     payload TEXT NOT NULL,
     UNIQUE (ticker, range_key)
 );
+
+-- The owner's watchlist, shown to everyone with access. Listed in the order added.
+CREATE TABLE IF NOT EXISTS watchlist (
+    ticker TEXT PRIMARY KEY,
+    added_at TEXT NOT NULL
+);
+
+-- Small settings the app generates for itself, e.g. its Web Push (VAPID) key.
+CREATE TABLE IF NOT EXISTS app_kv (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+-- Browsers and home-screen apps that asked for price alerts.
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+    endpoint TEXT PRIMARY KEY,
+    p256dh TEXT NOT NULL,
+    auth TEXT NOT NULL,
+    device TEXT,
+    created_at TEXT NOT NULL
+);
+
+-- Which side of each mean-reversion line a ticker was last seen on.
+CREATE TABLE IF NOT EXISTS alert_state (
+    ticker TEXT NOT NULL,
+    line TEXT NOT NULL,
+    side INTEGER NOT NULL,
+    notified_at TEXT,
+    PRIMARY KEY (ticker, line)
+);
+
+CREATE TABLE IF NOT EXISTS alert_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker TEXT NOT NULL,
+    line TEXT NOT NULL,
+    direction TEXT NOT NULL,
+    price REAL NOT NULL,
+    level REAL NOT NULL,
+    currency TEXT,
+    created_at TEXT NOT NULL
+);
 """
 
 
@@ -141,6 +182,86 @@ class Database:
     def delete_summary(self, summary_id: int) -> bool:
         with self._connect() as conn:
             return conn.execute("DELETE FROM saved_summaries WHERE id = ?", (summary_id,)).rowcount > 0
+
+    def list_watchlist(self) -> list[str]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT ticker FROM watchlist ORDER BY added_at, rowid").fetchall()
+        return [r["ticker"] for r in rows]
+
+    def add_to_watchlist(self, ticker: str) -> bool:
+        """False when it was already there."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                "INSERT INTO watchlist (ticker, added_at) VALUES (?, ?) ON CONFLICT (ticker) DO NOTHING",
+                (ticker, _now()),
+            )
+            return cur.rowcount > 0
+
+    def remove_from_watchlist(self, ticker: str) -> bool:
+        with self._connect() as conn:
+            # Forget its alert state too, so re-adding it later starts fresh instead of
+            # alerting on a cross that happened while it wasn't watched.
+            conn.execute("DELETE FROM alert_state WHERE ticker = ?", (ticker,))
+            return conn.execute("DELETE FROM watchlist WHERE ticker = ?", (ticker,)).rowcount > 0
+
+    def get_kv(self, key: str) -> str | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT value FROM app_kv WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else None
+
+    def set_kv(self, key: str, value: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO app_kv (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )
+
+    def save_subscription(self, endpoint: str, p256dh: str, auth: str, device: str | None) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO push_subscriptions (endpoint, p256dh, auth, device, created_at) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT (endpoint) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth,
+                    device = excluded.device
+                """,
+                (endpoint, p256dh, auth, device, _now()),
+            )
+
+    def list_subscriptions(self) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM push_subscriptions ORDER BY created_at").fetchall()
+        return [dict(r) for r in rows]
+
+    def delete_subscription(self, endpoint: str) -> bool:
+        with self._connect() as conn:
+            return conn.execute("DELETE FROM push_subscriptions WHERE endpoint = ?", (endpoint,)).rowcount > 0
+
+    def alert_state(self, ticker: str) -> dict[str, dict]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM alert_state WHERE ticker = ?", (ticker,)).fetchall()
+        return {r["line"]: {"side": r["side"], "notified_at": r["notified_at"]} for r in rows}
+
+    def set_alert_state(self, ticker: str, state: dict[str, dict]) -> None:
+        with self._connect() as conn:
+            conn.executemany(
+                """
+                INSERT INTO alert_state (ticker, line, side, notified_at) VALUES (?, ?, ?, ?)
+                ON CONFLICT (ticker, line) DO UPDATE SET side = excluded.side, notified_at = excluded.notified_at
+                """,
+                [(ticker, line, s["side"], s["notified_at"]) for line, s in state.items()],
+            )
+
+    def add_alert_event(self, ticker: str, line: str, direction: str, price: float, level: float, currency: str | None) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO alert_events (ticker, line, direction, price, level, currency, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (ticker, line, direction, price, level, currency, _now()),
+            )
+
+    def list_alert_events(self, limit: int = 20) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM alert_events ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(r) for r in rows]
 
 
 def _summary_row(row: sqlite3.Row) -> dict:
