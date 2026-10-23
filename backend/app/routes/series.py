@@ -214,3 +214,27 @@ def news(
             for n in items
         ],
     }
+
+
+@router.get("/financials")
+def financials(
+    request: Request,
+    ticker: str = Query(..., min_length=1, max_length=20),
+    _: Viewer = Depends(require_viewer),
+):
+    """Quarterly and annual statements, EPS vs. estimates and key ratios for a stock."""
+    ticker = ticker.strip().upper()
+    try:
+        fin = request.app.state.financials.get(ticker)
+    except Exception as exc:  # network errors, Yahoo rate limiting, etc.
+        raise HTTPException(502, f"Could not fetch financials from Yahoo Finance: {exc}")
+    if fin is None:
+        raise HTTPException(404, f"No financial statements for {ticker}")
+    return {
+        "ticker": ticker,
+        "currency": fin.currency,
+        "quarterly": fin.quarterly,
+        "annual": fin.annual,
+        "eps_history": fin.eps_history,
+        "ratios": fin.ratios,
+    }

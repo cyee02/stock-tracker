@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, PeriodReturn, SeriesResponse } from "../api";
 import { daysUntil, formatDay, formatPercent, formatPrice } from "../format";
 
-const TYPE_LABELS: Record<string, string> = {
+export const TYPE_LABELS: Record<string, string> = {
   EQUITY: "Stock",
   ETF: "ETF",
   MUTUALFUND: "Mutual fund",
@@ -82,7 +82,7 @@ const PLACEHOLDER_RETURNS: PeriodReturn[] = (["YTD", "1Y", "5Y", "10Y"] as const
   annualized: null,
 }));
 
-function EarningsDate({ start, end }: { start: string; end: string | null }) {
+export function EarningsDate({ start, end }: { start: string; end: string | null }) {
   const days = daysUntil(start);
   const when = days === 0 ? "today" : days === 1 ? "tomorrow" : `in ${days} days`;
   const label = end ? `${formatDay(start, false)} – ${formatDay(end)}` : formatDay(start);

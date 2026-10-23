@@ -67,6 +67,150 @@ export interface ReturnsResponse {
   returns: PeriodReturn[];
 }
 
+/** One period of a statement; every line item may be missing for a given company. */
+export interface IncomePeriod {
+  period: string;
+  revenue: number | null;
+  cost_of_revenue: number | null;
+  gross_profit: number | null;
+  r_and_d: number | null;
+  sga: number | null;
+  operating_expense: number | null;
+  operating_income: number | null;
+  net_interest_income: number | null;
+  pretax_income: number | null;
+  tax: number | null;
+  net_income: number | null;
+  ebitda: number | null;
+  diluted_eps: number | null;
+  gross_margin: number | null;
+  operating_margin: number | null;
+  net_margin: number | null;
+}
+
+export interface CashflowPeriod {
+  period: string;
+  operating_cf: number | null;
+  capex: number | null;
+  free_cf: number | null;
+  buybacks: number | null;
+  dividends_paid: number | null;
+  sbc: number | null;
+}
+
+export interface BalancePeriod {
+  period: string;
+  cash: number | null;
+  total_debt: number | null;
+  total_assets: number | null;
+  total_liabilities: number | null;
+  equity: number | null;
+  current_assets: number | null;
+  current_liabilities: number | null;
+}
+
+export interface Statements {
+  income: IncomePeriod[];
+  cashflow: CashflowPeriod[];
+  balance: BalancePeriod[];
+}
+
+export interface EpsQuarter {
+  quarter: string;
+  actual: number | null;
+  estimate: number | null;
+  /** Fraction: 0.05 = beat by 5%. */
+  surprise: number | null;
+}
+
+export type RatioKey =
+  | "trailing_pe"
+  | "forward_pe"
+  | "peg"
+  | "price_to_book"
+  | "price_to_sales"
+  | "ev_to_ebitda"
+  | "gross_margin"
+  | "operating_margin"
+  | "net_margin"
+  | "roe"
+  | "roa"
+  | "revenue_growth"
+  | "earnings_growth"
+  | "debt_to_equity"
+  | "current_ratio"
+  | "quick_ratio"
+  | "free_cash_flow"
+  | "dividend_yield"
+  | "payout_ratio"
+  | "beta"
+  | "market_cap";
+
+export interface FinancialsResponse {
+  ticker: string;
+  /** Currency the statements are reported in, which may differ from the quote's. */
+  currency: string | null;
+  quarterly: Statements;
+  annual: Statements;
+  eps_history: EpsQuarter[];
+  ratios: Record<RatioKey, number | null>;
+}
+
+/** One watched ticker: latest session, signals, and NAV or next earnings. */
+export interface WatchRow {
+  ticker: string;
+  /** Set when the prices couldn't be loaded; the other fields are then missing. */
+  error: string | null;
+  name?: string | null;
+  quote_type?: string | null;
+  currency?: string | null;
+  nav?: number | null;
+  earnings_date?: string | null;
+  earnings_date_end?: string | null;
+  date?: string;
+  open?: number | null;
+  high?: number | null;
+  low?: number | null;
+  close?: number | null;
+  prev_close?: number | null;
+  change_pct?: number | null;
+  ma?: number | null;
+  p25?: number | null;
+  p75?: number | null;
+  signal?: Signal | null;
+  sma50?: number | null;
+  sma200?: number | null;
+  trend?: Trend | null;
+  last_cross?: SmaCross | null;
+}
+
+export interface WatchlistResponse {
+  /** Trading days in the mean-reversion window (1 year). */
+  window: number;
+  rows: WatchRow[];
+}
+
+export interface AlertEvent {
+  id: number;
+  ticker: string;
+  line: "p25" | "ma" | "p75";
+  line_label: string;
+  direction: "above" | "below";
+  price: number;
+  level: number;
+  currency: string | null;
+  created_at: string;
+}
+
+export interface AlertsConfig {
+  /** VAPID key a device subscribes with. */
+  public_key: string;
+  interval_seconds: number;
+  last_check: string | null;
+  devices: { endpoint: string; device: string | null }[];
+  events: AlertEvent[];
+}
+
 /** Props every strategy chart takes. */
 export interface ChartProps {
   data: SeriesResponse;
@@ -280,6 +424,20 @@ export const api = {
       `/api/series?ticker=${encodeURIComponent(ticker)}&period=${period}${start ? `&start=${start}` : ""}`,
     ),
   returns: (ticker: string) => request<ReturnsResponse>(`/api/returns?ticker=${encodeURIComponent(ticker)}`),
+  watchlist: () => request<WatchlistResponse>("/api/watchlist"),
+  watchlistTickers: () => request<{ tickers: string[] }>("/api/watchlist/tickers"),
+  watch: (ticker: string) =>
+    request<{ tickers: string[] }>(`/api/watchlist/${encodeURIComponent(ticker)}`, { method: "PUT" }),
+  unwatch: (ticker: string) =>
+    request<{ tickers: string[] }>(`/api/watchlist/${encodeURIComponent(ticker)}`, { method: "DELETE" }),
+  alerts: () => request<AlertsConfig>("/api/alerts"),
+  subscribeAlerts: (sub: { endpoint: string; keys: { p256dh: string; auth: string }; device: string }) =>
+    request<void>("/api/alerts/subscriptions", { method: "POST", body: JSON.stringify(sub) }),
+  unsubscribeAlerts: (endpoint: string) =>
+    request<void>("/api/alerts/subscriptions/remove", { method: "POST", body: JSON.stringify({ endpoint }) }),
+  testAlert: () => request<{ sent: number; devices: number }>("/api/alerts/test", { method: "POST" }),
+  financials: (ticker: string) =>
+    request<FinancialsResponse>(`/api/financials?ticker=${encodeURIComponent(ticker)}`),
   news: (ticker: string, range?: DateRange) =>
     request<NewsResponse>(
       `/api/news?ticker=${encodeURIComponent(ticker)}${range ? `&start=${range.start}&end=${range.end}` : ""}`,

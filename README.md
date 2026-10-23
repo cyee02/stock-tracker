@@ -18,7 +18,43 @@ Above the chart, an overview card shows the ticker's name, type and description 
 
 For stocks, the overview card also shows the **next earnings date** from Yahoo's calendar, with a countdown in days. When the company hasn't confirmed it yet, Yahoo only has an estimated window, which is shown as a range marked *est.* ETFs, funds and indices have no earnings date, so nothing is shown for them.
 
-Below the overview, two tabs switch between **Charts** and **News**. The News tab lists the latest headlines Yahoo Finance has for the ticker (via `yfinance`), newest first, with publisher, age, a short summary and a link to the full article. The selected tab is kept in the URL (`?tab=news`), so a link can open straight to the news. Clicking a day on the candlestick chart shows that day's headlines instead, from Google News, because Yahoo only keeps the latest stories; the date is kept in the URL too (`?tab=news&news_date=2024-08-01`). **Latest news** goes back to Yahoo's feed.
+Below the overview, tabs switch between **Charts**, **Financials** (stocks only) and **News**. The News tab lists the latest headlines Yahoo Finance has for the ticker (via `yfinance`), newest first, with publisher, age, a short summary and a link to the full article. The selected tab is kept in the URL (`?tab=news`), so a link can open straight to the news. Clicking a day on the candlestick chart shows that day's headlines instead, from Google News, because Yahoo only keeps the latest stories; the date is kept in the URL too (`?tab=news&news_date=2024-08-01`). **Latest news** goes back to Yahoo's feed.
+
+## Financials
+
+For stocks, the **Financials** tab (`?tab=financials`) shows the company's results from Yahoo's statements. ETFs, funds and indices have no statements, so they don't get the tab. A **Quarterly | Annual** toggle switches between the last five or so quarters and the last four fiscal years; Yahoo keeps no more than that.
+
+- **Key ratios**: valuation (P/E, forward P/E, PEG, P/B, P/S, EV/EBITDA), profitability (gross, operating and net margin, ROE, ROA), growth, financial health (debt/equity, current and quick ratio, free cash flow) and shareholder returns (dividend yield, payout ratio, beta, market cap). Each has an ⓘ that explains what it measures and how to read it; hover or tap it.
+- **Charts**: revenue and profit, margins, expenses by type, EPS against the analyst estimate (beat or miss, last four quarters), cash flow, and cash against debt.
+- **Statements table**: every line item by period, with the change from the same period a year earlier (YoY), or from the previous quarter (QoQ) when Yahoo doesn't go back that far.
+
+Periods are named by the month they end ("Jun '26"), because fiscal quarters rarely match calendar ones. Banks and insurers report no gross profit or cost breakdown, so they show net interest income instead, and their expenses as revenue minus pre-tax income.
+
+## Watchlist
+
+**★ Watchlist** in the top bar (`/watchlist`) lists the tickers you save, with each one's latest session (open, high, low, close and the day's change), its 1-year mean-reversion signal with the 25th–75th percentile range, its 50/200-day SMA trend with the last cross, and its NAV (ETFs and funds) or next earnings date (stocks). Tap a ticker to open its chart.
+
+Add tickers on that page, or with **☆ Add to Watchlist** next to **Plot** on the Charts page. The list is stored in the database, so it's the same on every device. Only the owner can add or remove tickers; share-link viewers see the owner's list.
+
+Moving between Charts, Watchlist and AI Summaries doesn't reload the page, so the chart you were on (ticker, tab, chart type) is still there when you come back. The last ticker is also remembered on the device, so reopening the app starts on it.
+
+## Price alerts
+
+The server can send a push notification when a watchlist ticker's price crosses its 25th percentile, 1-year moving average or 75th percentile (the lines on the mean-reversion chart, 1-year window). Every `ALERT_INTERVAL_SECONDS` (default 300) it takes each watched ticker's live price from Yahoo and compares it with those lines. Tapping a notification opens that ticker's mean-reversion chart.
+
+- A cross only counts once the price is 0.2% past the line, and the same line on the same ticker stays quiet for 3 hours after an alert, so a price hovering on a line doesn't keep alerting.
+- A newly watched ticker only records which side of each line it's on; it alerts from the next cross.
+- Recent alerts are listed under **Price alerts** on the Watchlist page.
+
+Turn alerts on per device under **★ Watchlist → Price alerts → Turn on for this device**, then **Send test** to check. On an iPhone or iPad this only works in the app added to the Home Screen (see below), not in a Safari tab. On a Mac, Safari and Chrome both work; Chrome only shows them while it's running. Only the owner can turn alerts on.
+
+Alerts use Web Push. The server makes its own signing key (VAPID) on first use and keeps it in the database, and the notifications travel through Apple's or Google's push service, so the phone doesn't need to be on the tailnet to receive them (opening the chart does). The checks run on the server, so nothing is checked while it's asleep. Set `ALERT_INTERVAL_SECONDS=0` to turn the checker off.
+
+## Install on iPhone
+
+The site is a web app you can add to the Home Screen. Open it in **Safari** (other iPhone browsers only add a bookmark), tap **Share → Add to Home Screen**, and it opens full screen with its own icon, named **Stocks**. On phones, a drag on a chart scrolls the page instead of zooming; use the range buttons or the slider to change dates.
+
+A Home Screen app doesn't share storage with Safari, so a share-link token saved in Safari isn't known there. The access screen has a box to paste the link once. Behind Tailscale, the owner needs nothing: the tailnet identifies you.
 
 ## AI news summary
 
@@ -61,7 +97,7 @@ restrict which tailnet users get in; leave it unset to allow any of them, which
 is only appropriate on a tailnet where you are the sole user.
 
 The header is only honoured when the request arrives over loopback and carries
-no `Tailscale-Funnel-Request` header. That makes `scripts/tailscale.sh` the
+no `Tailscale-Funnel-Request` header. That makes `scripts/start-tailscale.sh` the
 supported way to run it — see [Serve it on your tailnet](#serve-it-on-your-tailnet).
 
 **2. Bearer tokens.** Needed whenever the caller is not on your tailnet.
@@ -77,11 +113,13 @@ sessions, rotate `ADMIN_KEY` and revoke all links.
 ## Project layout
 
 ```
-backend/   FastAPI app (yfinance data, bands, SQLite share links and saved AI
-           summaries, Claude CLI summarizer in app/summary.py) + pytest tests
-frontend/  React + TypeScript + Vite, Plotly chart
+backend/   FastAPI app (yfinance data, bands, SQLite share links, saved AI
+           summaries and the watchlist, Claude CLI summarizer in app/summary.py,
+           price-alert checker in app/alerts.py) + pytest tests
+frontend/  React + TypeScript + Vite, Plotly charts; public/ holds the web-app
+           manifest, icons and the service worker for push notifications
 scripts/   dev.sh — local setup and run; restart.sh — restart on the current branch;
-           tailscale.sh — serve to your tailnet
+           start-/restart-/stop-tailscale.sh — serve to your tailnet
 .claude/   Claude Code config: the pr-readme skill and the hook that enforces it
 Dockerfile Single container: builds the frontend and serves it from FastAPI
 fly.toml   Fly.io deployment config
@@ -147,23 +185,27 @@ surface. Requires [Tailscale](https://tailscale.com/download) installed and
 `tailscale up` run on this machine.
 
 ```bash
-./scripts/tailscale.sh
+./scripts/start-tailscale.sh
 ```
 
 It builds what's missing, publishes the app at `https://<machine>.<tailnet>.ts.net`,
 and prints the URL. Only devices signed in to your tailnet can reach it, and no
 access key is involved. Stopping the script removes the endpoint.
 
+After a code change, `./scripts/restart-tailscale.sh` rebuilds and restarts it in
+the background (logging to `.tailscale.log`); `./scripts/stop-tailscale.sh` stops
+serving.
+
 Restrict access to specific tailnet users (worth doing if anyone else is on the
 tailnet):
 
 ```bash
-TAILSCALE_ALLOWED_LOGINS="you@example.com" ./scripts/tailscale.sh
+TAILSCALE_ALLOWED_LOGINS="you@example.com" ./scripts/start-tailscale.sh
 ```
 
 Notes and caveats:
 
-- Your machine has to be awake and online. On a Mac, `caffeinate -s ./scripts/tailscale.sh` keeps it from sleeping while serving.
+- Your machine has to be awake and online. On a Mac, `caffeinate -s ./scripts/start-tailscale.sh` keeps it from sleeping while serving.
 - The identity headers are trusted because uvicorn binds to `127.0.0.1` and Tailscale is the only way in. **Do not** change the script to bind `0.0.0.0`, and do not add `--proxy-headers`/`--forwarded-allow-ips` to it: with those, the peer address comes from a caller-supplied `X-Forwarded-For` and the check in `backend/app/auth.py` can be fooled.
 - **Never run `tailscale funnel` on this app** while relying on tailnet identity. Funnel publishes the endpoint to the public internet. Requests arriving that way are refused rather than trusted, but you'd be exposing the service deliberately — use `ADMIN_KEY` instead if you want that.
 

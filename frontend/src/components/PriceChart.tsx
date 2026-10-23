@@ -3,6 +3,9 @@ import Plotly, { PlotlyElement } from "plotly.js-finance-dist-min";
 import { Point, SeriesResponse } from "../api";
 import { monthEnd, Preset, PRESETS, presetStart, TODAY, View, viewEnd } from "../view";
 
+/** Touch screens: a drag on the chart should scroll the page, not zoom it. */
+export const IS_TOUCH = typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches;
+
 export function cssVar(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
@@ -156,13 +159,14 @@ export default function PriceChart({
 
     const base: Record<string, unknown> = {
       autosize: true,
-      height: Math.max(360, Math.min(600, window.innerHeight * 0.62)),
+      height: Math.max(IS_TOUCH ? 300 : 360, Math.min(600, window.innerHeight * 0.62)),
       margin: { l: 48, r: 12, t: 12, b: 8 },
       paper_bgcolor: colors.bg,
       plot_bgcolor: colors.bg,
       font: { color: colors.text, family: "inherit" },
       hovermode: "x unified",
       hoverlabel: { bgcolor: colors.bg, bordercolor: colors.grid, font: { color: colors.fg } },
+      dragmode: IS_TOUCH ? false : "zoom",
       showlegend: false,
       xaxis: {
         type: "date",

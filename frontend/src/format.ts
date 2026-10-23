@@ -11,6 +11,27 @@ export function formatPercent(v: number | null): string {
   return `${sign}${(v * 100).toFixed(2)}%`;
 }
 
+/** Large amounts as 109.4B / -3.2M / 850K. */
+export function formatCompact(v: number | null): string {
+  if (v === null) return "—";
+  const a = Math.abs(v);
+  const [div, unit] = a >= 1e12 ? [1e12, "T"] : a >= 1e9 ? [1e9, "B"] : a >= 1e6 ? [1e6, "M"] : a >= 1e3 ? [1e3, "K"] : [1, ""];
+  return `${(v / div).toFixed(div === 1 ? 2 : 1)}${unit}`;
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/**
+ * "Jun '26" for a quarter ending in June 2026; "FY Sep '25" for a fiscal year.
+ * Named by the period-end month rather than "Q2", because fiscal quarters
+ * (Apple's Q3 ends in June) rarely match calendar ones.
+ */
+export function periodLabel(iso: string, annual: boolean): string {
+  const [y, m] = iso.split("-").map(Number);
+  const label = `${MONTHS[m - 1]} '${String(y).slice(2)}`;
+  return annual ? `FY ${label}` : label;
+}
+
 const DAY_MS = 86_400_000;
 
 function parseDay(iso: string): Date {
