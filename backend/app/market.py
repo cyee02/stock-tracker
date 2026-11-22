@@ -8,6 +8,7 @@ import time
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 import pandas as pd
@@ -441,6 +442,8 @@ class Financials:
     eps_history: list[dict]
     ratios: dict[str, float | None]
     currency: str | None = None
+    # name, sector, industry and Yahoo's keys for them; used to find peers.
+    profile: dict = field(default_factory=dict)
 
 
 def _statement(df: pd.DataFrame | None, rows: dict[str, list[str]]) -> list[dict]:
@@ -535,7 +538,114 @@ def download_financials(ticker: str) -> Financials | None:
         eps_history=eps,
         ratios=normalize_ratios(info),
         currency=info.get("financialCurrency") or info.get("currency"),
+        profile=company_profile(info),
     )
+
+
+def company_profile(info: dict) -> dict:
+    return {
+        "name": info.get("longName") or info.get("shortName"),
+        "sector": info.get("sector"),
+        "industry": info.get("industry"),
+        "sector_key": info.get("sectorKey"),
+        "industry_key": info.get("industryKey"),
+        "market_cap": _float(info.get("marketCap")),
+    }
+
+
+def latest_period(fin: Financials) -> str | None:
+    """End of the most recent reported period, quarterly if there is one."""
+    for st in (fin.quarterly, fin.annual):
+        if st["income"]:
+            return st["income"][-1]["period"]
+    return None
+
+
+# Peers compared against in the AI financial analysis.
+PEER_COUNT = 6
+# Same-industry companies more than this many times bigger or smaller aren't comparable.
+MAX_SIZE_GAP = 50
+
+
+def choose_peers(target_cap: float | None, candidates: list[dict], n: int = PEER_COUNT) -> list[dict]:
+    """Pick up to `n` peers from `candidates` ({ticker, market_cap, same_industry, ...}).
+
+    Same-industry companies of a similar size come first, then the rest of the
+    sector, each by closeness in size (or in Yahoo's order when sizes are unknown).
+    """
+    def gap(c: dict) -> float:
+        cap = c.get("market_cap")
+        if not target_cap or not cap or cap <= 0:
+            return math.inf
+        return abs(math.log(cap / target_cap))
+
+    limit = math.log(MAX_SIZE_GAP)
+    industry = [c for c in candidates if c["same_industry"] and (not target_cap or gap(c) <= limit)]
+    rest = [c for c in candidates if not c["same_industry"]]
+    industry.sort(key=gap)
+    rest.sort(key=gap)
+    # Fill from the rest of the sector only when the industry is thin.
+    picked = industry[:n]
+    picked += [c for c in rest if c["market_cap"]][: n - len(picked)]
+    return picked
+
+
+def peer_medians(peers: list[dict]) -> dict[str, float | None]:
+    out = {}
+    for key in RATIO_KEYS:
+        vals = sorted(v for p in peers if (v := p["ratios"].get(key)) is not None)
+        if not vals:
+            out[key] = None
+            continue
+        mid = len(vals) // 2
+        out[key] = vals[mid] if len(vals) % 2 else (vals[mid - 1] + vals[mid]) / 2
+    return out
+
+
+def _top_symbols(df) -> list[str]:
+    return [str(s) for s in df.index] if df is not None and not df.empty else []
+
+
+def _peer_record(symbol: str, industry_key: str | None) -> dict | None:
+    try:
+        info = yf.Ticker(symbol).info or {}
+    except Exception as exc:
+        log.info("no quote summary for peer %s: %s", symbol, exc)
+        return None
+    if info.get("quoteType") not in (None, "EQUITY"):
+        return None
+    return {
+        "ticker": symbol,
+        "name": info.get("shortName") or info.get("longName"),
+        "industry": info.get("industry"),
+        "same_industry": bool(industry_key) and info.get("industryKey") == industry_key,
+        "market_cap": _float(info.get("marketCap")),
+        "currency": info.get("financialCurrency") or info.get("currency"),
+        "ratios": normalize_ratios(info),
+    }
+
+
+def download_peers(ticker: str, profile: dict) -> dict | None:
+    """Comparable companies from Yahoo's industry and sector lists, with their ratios.
+
+    None when Yahoo doesn't classify the company.
+    """
+    industry_key, sector_key = profile.get("industry_key"), profile.get("sector_key")
+    if not industry_key and not sector_key:
+        return None
+    symbols: list[str] = []
+    for kind, key in ((yf.Industry, industry_key), (yf.Sector, sector_key)):
+        if not key:
+            continue
+        try:
+            symbols += _top_symbols(kind(key).top_companies)[:12]
+        except Exception as exc:
+            log.info("no top companies for %s: %s", key, exc)
+    symbols = [s for s in dict.fromkeys(symbols) if s.upper() != ticker.upper()]
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        records = [r for r in pool.map(lambda s: _peer_record(s, industry_key), symbols) if r]
+    peers = choose_peers(profile.get("market_cap"), records)
+    return {"peers": peers, "median": peer_medians(peers)}
 
 
 class TTLCache:

@@ -1,4 +1,5 @@
 import type { RatioKey } from "./api";
+import { formatCompact } from "./format";
 
 /** How a ratio's value is shown: a multiple (12.3x), a percentage, a plain number or an amount. */
 export type RatioFormat = "x" | "pct" | "num" | "money";
@@ -169,3 +170,11 @@ export const RATIO_INFO: Record<RatioKey, RatioInfo> = {
       "Sets the size class (large cap > $10B, mid $2–10B, small < $2B). Large caps tend to be steadier; small caps can grow faster but are riskier.",
   },
 };
+
+export function formatRatio(v: number | null | undefined, format: RatioFormat): string {
+  if (v === null || v === undefined) return "—";
+  if (format === "pct") return `${(v * 100).toFixed(1)}%`;
+  if (format === "x") return `${v.toFixed(2)}x`;
+  if (format === "money") return formatCompact(v);
+  return v.toFixed(2);
+}

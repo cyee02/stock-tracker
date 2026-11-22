@@ -313,6 +313,70 @@ export interface SummaryEntry {
   articles_total: number;
 }
 
+/** Claude's analysis of a company's financials (see backend app/fin_summary.py). */
+export type Health = "strong" | "solid" | "mixed" | "weak";
+export type ValuationLabel = "cheap" | "fair" | "expensive";
+export type MetricTrend = "improving" | "stable" | "deteriorating" | "unclear";
+export type PeerVerdict = "favorable" | "in_line" | "unfavorable";
+
+export interface FinancialSummary {
+  one_liner: string;
+  health: { label: Health; rationale: string };
+  valuation: { label: ValuationLabel; rationale: string };
+  metrics_to_watch: { metric: string; value: string; trend: MetricTrend; why: string; watch_for: string }[];
+  peer_comparison: { metric: RatioKey; verdict: PeerVerdict; comment: string }[];
+  peer_notes: string;
+  statement_insights: { growth: string[]; profitability: string[]; cash_flow: string[]; balance_sheet: string[] };
+  strengths: string[];
+  concerns: string[];
+  sources: string[];
+}
+
+export interface Peer {
+  ticker: string;
+  name: string | null;
+  industry: string | null;
+  same_industry: boolean;
+  market_cap: number | null;
+  currency: string | null;
+  ratios: Record<RatioKey, number | null>;
+}
+
+export interface CompanyProfile {
+  name: string | null;
+  sector: string | null;
+  industry: string | null;
+  market_cap: number | null;
+}
+
+/** A generated financial analysis with the numbers it was based on. */
+export interface FinSummaryEntry {
+  generated_at: string;
+  model: string | null;
+  summary: FinancialSummary;
+  /** End of the latest reported period the analysis covers. */
+  period: string;
+  currency: string | null;
+  profile: CompanyProfile;
+  ratios: Record<RatioKey, number | null>;
+  peers: Peer[];
+  peer_median: Record<RatioKey, number | null> | null;
+}
+
+/** Where a summary came from and whether it's saved; shared by news and financials. */
+interface SummaryStatus {
+  saved: boolean;
+  saved_id: number | null;
+  saved_at: string | null;
+  /** A refreshed summary in the cache is newer than the saved one. */
+  has_newer_unsaved: boolean;
+  /** A background Claude run, if one is going or just failed. */
+  job: SummaryJobStatus | null;
+}
+
+export type FinSummaryResponse = { ticker: string; kind: "financials"; period: string } & SummaryStatus &
+  ({ summary: null } | (FinSummaryEntry & { source: "cache" | "saved"; expires_in: number | null }));
+
 export type NewsSummaryResponse = {
   ticker: string;
   start: string | null;
@@ -329,38 +393,45 @@ export type NewsSummaryResponse = {
   | (SummaryEntry & { source: "cache" | "saved"; expires_in: number | null })
 );
 
-export interface SavedSummaryRow {
+/** List badges: sentiment and stance for news, health and valuation for financials. */
+interface SummaryBadges {
+  sentiment?: Sentiment | null;
+  stance?: StanceAction | null;
+  health?: Health | null;
+  valuation?: ValuationLabel | null;
+}
+
+export interface SavedSummaryRow extends SummaryKeyFields, SummaryBadges {
   id: number;
-  ticker: string;
-  range_key: string;
-  start: string | null;
-  end: string | null;
   generated_at: string;
   saved_at: string;
   model: string | null;
-  sentiment: Sentiment | null;
-  stance: StanceAction | null;
 }
 
-export type SavedSummary = Omit<SavedSummaryRow, "sentiment" | "stance"> & SummaryEntry;
+type SavedMeta = Omit<SavedSummaryRow, keyof SummaryBadges | "kind" | "period">;
+export type SavedSummary = SavedMeta & SummaryEntry;
+/** A saved summary of either kind; tell them apart by `range_key` (see `isFinKey`). */
+export type SavedAnySummary = SavedMeta & (SummaryEntry | FinSummaryEntry);
+
+export const isFinKey = (rangeKey: string) => rangeKey.startsWith("fin:");
 
 export type SummaryJobStatus = { status: "running"; started_at: string } | { status: "failed"; error: string };
 
-/** Identifies the headlines a summary covers. */
+/** Identifies what a summary covers: the headlines (news) or the reporting period (financials). */
 export interface SummaryKeyFields {
   ticker: string;
   range_key: string;
+  kind: "news" | "financials";
   start: string | null;
   end: string | null;
+  period: string | null;
 }
 
 /** A generated summary still in the 1-hour cache and not saved (or newer than the saved copy). */
-export interface UnsavedSummaryRow extends SummaryKeyFields {
+export interface UnsavedSummaryRow extends SummaryKeyFields, SummaryBadges {
   generated_at: string;
   expires_in: number;
   model: string | null;
-  sentiment: Sentiment;
-  stance: StanceAction;
   replaces_saved: boolean;
 }
 
@@ -457,10 +528,25 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ ticker, start: range?.start ?? null, end: range?.end ?? null }),
     }),
-  /** Saved, unsaved-but-cached and in-progress summaries; all tickers unless one is given. */
+  /** Saved or cached analysis of the latest (or given) period's financials; never calls Claude. */
+  peekFinSummary: (ticker: string, period?: string | null) =>
+    request<FinSummaryResponse>(
+      `/api/financials/summary?ticker=${encodeURIComponent(ticker)}${period ? `&period=${period}` : ""}`,
+    ),
+  finSummary: (ticker: string, refresh = false) =>
+    request<FinSummaryResponse>("/api/financials/summary", {
+      method: "POST",
+      body: JSON.stringify({ ticker, refresh }),
+    }),
+  saveFinSummary: (ticker: string, period?: string | null) =>
+    request<unknown>("/api/financials/summaries", {
+      method: "POST",
+      body: JSON.stringify({ ticker, period: period ?? null }),
+    }),
+  /** Saved, unsaved-but-cached and in-progress summaries of both kinds; all tickers unless one is given. */
   summariesOverview: (ticker?: string) =>
     request<SummariesOverview>(`/api/news/summaries${ticker ? `?ticker=${encodeURIComponent(ticker)}` : ""}`),
-  getSavedSummary: (id: number) => request<SavedSummary>(`/api/news/summaries/${id}`),
+  getSavedSummary: (id: number) => request<SavedAnySummary>(`/api/news/summaries/${id}`),
   deleteSavedSummary: (id: number) => request<void>(`/api/news/summaries/${id}`, { method: "DELETE" }),
   listLinks: () => request<ShareLink[]>("/api/admin/links"),
   createLink: (name: string) =>

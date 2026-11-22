@@ -37,14 +37,19 @@ def _csv(name: str) -> tuple[str, ...]:
     return tuple(sorted({v.strip().lower() for v in raw.split(",") if v.strip()}))
 
 
-def _find_claude() -> str | None:
-    """CLAUDE_CLI, else `claude` on PATH, else the newest copy bundled with the VS Code extension."""
+def find_claude() -> str | None:
+    """CLAUDE_CLI, else `claude` on PATH or in the native installer's folder,
+    else the newest copy bundled with the VS Code extension."""
     explicit = os.environ.get("CLAUDE_CLI", "").strip()
     if explicit:
         return os.path.expanduser(explicit)
     on_path = shutil.which("claude")
     if on_path:
         return on_path
+    for candidate in ("~/.local/bin/claude", "~/.claude/local/claude"):
+        path = os.path.expanduser(candidate)
+        if os.path.isfile(path):
+            return path
     bundled = glob.glob(
         os.path.expanduser("~/.vscode/extensions/anthropic.claude-code-*/resources/native-binary/claude")
     )
@@ -68,7 +73,7 @@ def get_settings() -> Settings:
         ),
         tailscale_auth=tailscale_auth,
         tailscale_allowed_logins=_csv("TAILSCALE_ALLOWED_LOGINS"),
-        claude_cli=_find_claude(),
+        claude_cli=find_claude(),
         claude_model=os.environ.get("CLAUDE_MODEL", "").strip() or None,
         claude_timeout_seconds=int(os.environ.get("CLAUDE_TIMEOUT_SECONDS", "240")),
         summary_ttl_seconds=int(os.environ.get("SUMMARY_TTL_SECONDS", "3600")),

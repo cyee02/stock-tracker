@@ -1,30 +1,47 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   api,
+  FinSummaryEntry,
+  isFinKey,
   SavedSummaryRow,
   SummariesOverview,
   SummaryEntry,
   SummaryKeyFields,
   UnsavedSummaryRow,
 } from "../api";
+import FinSummaryView, { HEALTH_LABELS, VALUATION_LABELS } from "../components/FinSummaryView";
 import SummaryView from "../components/SummaryView";
 import { formatDay, formatRelative } from "../format";
 
 const SENTIMENT_LABELS = { bullish: "Bullish", bearish: "Bearish", neutral: "Neutral", mixed: "Mixed" };
 const STANCE_LABELS = { buy: "Buy", hold: "Hold", sell: "Sell" };
+const KIND_LABELS = { news: "News", financials: "Financials" };
 const POLL_MS = 3000;
 
-export function summaryLabel(row: Pick<SummaryKeyFields, "range_key" | "start" | "end">): string {
+type Kind = SummaryKeyFields["kind"];
+type AnyEntry = SummaryEntry | FinSummaryEntry;
+
+export function summaryLabel(row: Pick<SummaryKeyFields, "range_key" | "start" | "end" | "period">): string {
+  if (isFinKey(row.range_key)) return `Period ended ${formatDay(row.period ?? row.range_key.slice(4))}`;
   if (row.range_key.startsWith("latest:")) return `Latest news · ${formatDay(row.range_key.slice(7))}`;
   if (!row.start || !row.end || row.start === row.end) return formatDay(row.end ?? row.start ?? "");
   return `${formatDay(row.start, false)} – ${formatDay(row.end)}`;
 }
 
-/** The ticker page showing the headlines a summary was made from. */
-function headlinesUrl(row: SummaryKeyFields): string {
+/** The ticker page a summary was made from: the headlines, or the Financials tab. */
+function sourceUrl(row: SummaryKeyFields): string {
+  if (row.kind === "financials") return `/?${new URLSearchParams({ ticker: row.ticker, tab: "financials" })}`;
   const q = new URLSearchParams({ ticker: row.ticker, tab: "news" });
   if (!row.range_key.startsWith("latest:") && row.end) q.set("news_date", row.end);
   return `/?${q}`;
+}
+
+function SourceLink({ row }: { row: SummaryKeyFields }) {
+  return (
+    <a className="sum-link" href={sourceUrl(row)}>
+      {row.kind === "financials" ? "Open financials" : "Open headlines"}
+    </a>
+  );
 }
 
 function rangeOf(row: SummaryKeyFields) {
@@ -47,8 +64,12 @@ export default function SummariesPage({ isAdmin }: { isAdmin: boolean }) {
   const [filter, setFilter] = useState<string | null>(
     () => new URLSearchParams(window.location.search).get("ticker")?.toUpperCase() || null,
   );
+  const [kindFilter, setKindFilter] = useState<Kind | null>(() => {
+    const k = new URLSearchParams(window.location.search).get("kind");
+    return k === "news" || k === "financials" ? k : null;
+  });
   const [openId, setOpenId] = useState<string | null>(null);
-  const [full, setFull] = useState<Record<string, SummaryEntry>>({});
+  const [full, setFull] = useState<Record<string, AnyEntry>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [, setTick] = useState(0);
@@ -73,12 +94,19 @@ export default function SummariesPage({ isAdmin }: { isAdmin: boolean }) {
     };
   }, [running, load]);
 
+  const setParam = (name: string, value: string | null) => {
+    const url = new URL(window.location.href);
+    if (value) url.searchParams.set(name, value);
+    else url.searchParams.delete(name);
+    window.history.replaceState(null, "", url.pathname + url.search);
+  };
   const selectFilter = (t: string | null) => {
     setFilter(t);
-    const url = new URL(window.location.href);
-    if (t) url.searchParams.set("ticker", t);
-    else url.searchParams.delete("ticker");
-    window.history.replaceState(null, "", url.pathname + url.search);
+    setParam("ticker", t);
+  };
+  const selectKind = (k: Kind | null) => {
+    setKindFilter(k);
+    setParam("kind", k);
   };
 
   const toggleSaved = (row: SavedSummaryRow) => {
@@ -97,10 +125,11 @@ export default function SummariesPage({ isAdmin }: { isAdmin: boolean }) {
     setError(null);
     if (openId === id) return setOpenId(null);
     setOpenId(id);
-    api
-      .peekNewsSummary(row.ticker, rangeOf(row))
+    const peek: Promise<{ summary: unknown; source?: string }> =
+      row.kind === "financials" ? api.peekFinSummary(row.ticker, row.period) : api.peekNewsSummary(row.ticker, rangeOf(row));
+    peek
       .then((r) => {
-        if (r.summary && r.source === "cache") setFull((f) => ({ ...f, [id]: r }));
+        if (r.summary && r.source === "cache") setFull((f) => ({ ...f, [id]: r as AnyEntry }));
         else setError("This summary has expired.");
       })
       .catch((e) => setError(e.message));
@@ -110,8 +139,7 @@ export default function SummariesPage({ isAdmin }: { isAdmin: boolean }) {
     const id = rowId(row, "unsaved");
     setBusy(id);
     setError(null);
-    api
-      .saveNewsSummary(row.ticker, rangeOf(row))
+    (row.kind === "financials" ? api.saveFinSummary(row.ticker, row.period) : api.saveNewsSummary(row.ticker, rangeOf(row)))
       .then(() => {
         setOpenId(null);
         load();
@@ -121,7 +149,8 @@ export default function SummariesPage({ isAdmin }: { isAdmin: boolean }) {
   };
 
   const remove = (row: SavedSummaryRow) => {
-    if (!window.confirm(`Delete the saved ${row.ticker} summary for ${summaryLabel(row)}?`)) return;
+    const what = row.kind === "financials" ? "financial analysis" : "summary";
+    if (!window.confirm(`Delete the saved ${row.ticker} ${what} for ${summaryLabel(row)}?`)) return;
     api
       .deleteSavedSummary(row.id)
       .then(load)
@@ -130,8 +159,7 @@ export default function SummariesPage({ isAdmin }: { isAdmin: boolean }) {
 
   const retry = (row: SummaryKeyFields) => {
     setError(null);
-    api
-      .newsSummary(row.ticker, rangeOf(row), true)
+    (row.kind === "financials" ? api.finSummary(row.ticker, true) : api.newsSummary(row.ticker, rangeOf(row), true))
       .then(load)
       .catch((e) => setError(e.message));
   };
@@ -142,22 +170,35 @@ export default function SummariesPage({ isAdmin }: { isAdmin: boolean }) {
   else {
     const { items, unsaved, jobs } = state.data;
     const tickers = [...new Set([...jobs, ...unsaved, ...items].map((r) => r.ticker))].sort();
-    const keep = <T extends SummaryKeyFields>(rows: T[]) => (filter ? rows.filter((r) => r.ticker === filter) : rows);
+    const kinds = new Set([...jobs, ...unsaved, ...items].map((r) => r.kind));
+    const keep = <T extends SummaryKeyFields>(rows: T[]) =>
+      rows.filter((r) => (!filter || r.ticker === filter) && (!kindFilter || r.kind === kindFilter));
     const [j, u, s] = [keep(jobs), keep(unsaved), keep(items)];
 
     const head = (row: SummaryKeyFields, extra: React.ReactNode) => (
       <>
         <span className="sum-ticker">{row.ticker}</span>
+        <span className={`sum-kind sum-kind-${row.kind}`}>{KIND_LABELS[row.kind]}</span>
         <strong>{summaryLabel(row)}</strong>
         {extra}
       </>
     );
-    const badges = (sentiment: keyof typeof SENTIMENT_LABELS | null, stance: keyof typeof STANCE_LABELS | null) => (
+    const badges = (row: SavedSummaryRow | UnsavedSummaryRow) => (
       <>
-        {sentiment && <span className={`badge badge-${sentiment}`}>{SENTIMENT_LABELS[sentiment]}</span>}
-        {stance && <span className={`badge badge-${stance}`}>{STANCE_LABELS[stance]}</span>}
+        {row.sentiment && <span className={`badge badge-${row.sentiment}`}>{SENTIMENT_LABELS[row.sentiment]}</span>}
+        {row.stance && <span className={`badge badge-${row.stance}`}>{STANCE_LABELS[row.stance]}</span>}
+        {row.health && <span className={`badge badge-h-${row.health}`}>{HEALTH_LABELS[row.health]}</span>}
+        {row.valuation && (
+          <span className={`badge badge-v-${row.valuation}`}>{VALUATION_LABELS[row.valuation]}</span>
+        )}
       </>
     );
+    const view = (row: SummaryKeyFields, entry: AnyEntry, footer?: React.ReactNode) =>
+      row.kind === "financials" ? (
+        <FinSummaryView entry={entry as FinSummaryEntry} footer={footer} />
+      ) : (
+        <SummaryView entry={entry as SummaryEntry} footer={footer} />
+      );
 
     content = (
       <>
@@ -172,6 +213,21 @@ export default function SummariesPage({ isAdmin }: { isAdmin: boolean }) {
                 onClick={() => selectFilter(t)}
               >
                 {t ?? "All"}
+              </button>
+            ))}
+          </div>
+        )}
+        {kinds.size > 1 && (
+          <div className="range-presets sum-filter" role="radiogroup" aria-label="Kind">
+            {([null, "news", "financials"] as const).map((k) => (
+              <button
+                key={k ?? "all"}
+                role="radio"
+                aria-checked={kindFilter === k}
+                className={`range-btn${kindFilter === k ? " active" : ""}`}
+                onClick={() => selectKind(k)}
+              >
+                {k ? KIND_LABELS[k] : "All kinds"}
               </button>
             ))}
           </div>
@@ -198,9 +254,7 @@ export default function SummariesPage({ isAdmin }: { isAdmin: boolean }) {
                       )}
                     </span>
                     <span className="saved-actions">
-                      <a className="sum-link" href={headlinesUrl(row)}>
-                        Open headlines
-                      </a>
+                      <SourceLink row={row} />
                       {isAdmin && row.status === "failed" && (
                         <button className="link-button" onClick={() => retry(row)}>
                           Try again
@@ -233,7 +287,7 @@ export default function SummariesPage({ isAdmin }: { isAdmin: boolean }) {
                         {head(
                           row,
                           <>
-                            {badges(row.sentiment, row.stance)}
+                            {badges(row)}
                             <span className="muted saved-when">
                               Generated {formatRelative(row.generated_at)} · expires in{" "}
                               {Math.max(1, Math.round(row.expires_in / 60))}m
@@ -248,12 +302,10 @@ export default function SummariesPage({ isAdmin }: { isAdmin: boolean }) {
                             {busy === id ? "Saving…" : row.replaces_saved ? "Save (replace saved)" : "Save"}
                           </button>
                         )}
-                        <a className="sum-link" href={headlinesUrl(row)}>
-                          Open headlines
-                        </a>
+                        <SourceLink row={row} />
                       </span>
                     </div>
-                    {open && (full[id] ? <SummaryView entry={full[id]} /> : <p className="muted">Loading…</p>)}
+                    {open && (full[id] ? view(row, full[id]) : <p className="muted">Loading…</p>)}
                   </li>
                 );
               })}
@@ -265,8 +317,9 @@ export default function SummariesPage({ isAdmin }: { isAdmin: boolean }) {
           <h2>Saved</h2>
           {s.length === 0 ? (
             <p className="muted sum-empty">
-              Nothing saved yet. On a ticker's News tab, click <strong>Summarize with Claude</strong>, then{" "}
-              <strong>Save</strong> to keep the result here.
+              Nothing saved yet. On a ticker's News tab click <strong>Summarize with Claude</strong>, or on its
+              Financials tab click <strong>Analyse with Claude</strong>, then <strong>Save</strong> to keep the result
+              here.
             </p>
           ) : (
             <ul className="saved-list">
@@ -283,15 +336,13 @@ export default function SummariesPage({ isAdmin }: { isAdmin: boolean }) {
                         {head(
                           row,
                           <>
-                            {badges(row.sentiment, row.stance)}
+                            {badges(row)}
                             <span className="muted saved-when">Saved {formatRelative(row.saved_at)}</span>
                           </>,
                         )}
                       </button>
                       <span className="saved-actions">
-                        <a className="sum-link" href={headlinesUrl(row)}>
-                          Open headlines
-                        </a>
+                        <SourceLink row={row} />
                         {isAdmin && (
                           <button className="link-button danger-link" onClick={() => remove(row)}>
                             Delete
@@ -301,10 +352,7 @@ export default function SummariesPage({ isAdmin }: { isAdmin: boolean }) {
                     </div>
                     {open &&
                       (full[id] ? (
-                        <SummaryView
-                          entry={full[id]}
-                          footer={<span>Generated {formatRelative(full[id].generated_at)}</span>}
-                        />
+                        view(row, full[id], <span>Generated {formatRelative(full[id].generated_at)}</span>)
                       ) : (
                         <p className="muted">Loading…</p>
                       ))}
@@ -322,7 +370,7 @@ export default function SummariesPage({ isAdmin }: { isAdmin: boolean }) {
     <main className="summaries-page">
       <div className="sum-head">
         <h1>AI Summaries</h1>
-        <p className="muted">Claude's briefings on the news, for every ticker you've summarized.</p>
+        <p className="muted">Claude's briefings on the news and analyses of the financials, for every ticker.</p>
       </div>
       {error && <div className="card error">{error}</div>}
       {content}

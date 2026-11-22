@@ -218,7 +218,7 @@ def build_prompt(
     )
 
 
-def parse_cli_output(stdout: str) -> dict:
+def parse_cli_output(stdout: str, result_model: type[BaseModel] = Summary) -> dict:
     """The validated summary from `claude -p --output-format json` output, plus the model used."""
     try:
         out = json.loads(stdout)
@@ -235,14 +235,22 @@ def parse_cli_output(stdout: str) -> dict:
         except json.JSONDecodeError:
             raise SummaryError("Claude didn't return a structured summary")
     try:
-        summary = Summary.model_validate(raw).model_dump()
+        summary = result_model.model_validate(raw).model_dump()
     except ValidationError as exc:
         raise SummaryError(f"Claude's summary didn't match the expected shape: {exc.errors()[:3]}")
     models = list((out.get("modelUsage") or {}).keys())
     return {"summary": summary, "model": models[0] if models else None}
 
 
-def run_claude(prompt: str, *, cli: str | None, model: str | None = None, timeout: int = 240) -> dict:
+def run_claude(
+    prompt: str,
+    *,
+    cli: str | None,
+    model: str | None = None,
+    timeout: int = 240,
+    schema: dict = SUMMARY_SCHEMA,
+    result_model: type[BaseModel] = Summary,
+) -> dict:
     if not cli or not os.path.isfile(cli):
         raise ClaudeUnavailable(
             "Claude CLI not found. Install Claude Code and log in, or set CLAUDE_CLI to its path."
@@ -251,7 +259,7 @@ def run_claude(prompt: str, *, cli: str | None, model: str | None = None, timeou
         cli,
         "-p",
         "--output-format", "json",
-        "--json-schema", json.dumps(SUMMARY_SCHEMA),
+        "--json-schema", json.dumps(schema),
         # Only WebFetch: no shell, no file access, no MCP servers or project settings.
         "--tools", "WebFetch",
         "--allowedTools", "WebFetch",
@@ -262,12 +270,12 @@ def run_claude(prompt: str, *, cli: str | None, model: str | None = None, timeou
     if model:
         args += ["--model", model]
     try:
-        return _run_once(args, prompt, timeout)
+        return _run_once(args, prompt, timeout, result_model)
     except SummaryError as exc:
         # Claude occasionally misses the schema; a fresh run usually doesn't.
         if not _is_shape_error(exc):
             raise
-        return _run_once(args, prompt, timeout)
+        return _run_once(args, prompt, timeout, result_model)
 
 
 def _is_shape_error(exc: SummaryError) -> bool:
@@ -275,7 +283,7 @@ def _is_shape_error(exc: SummaryError) -> bool:
     return "structured_output" in msg or "expected shape" in msg or "structured summary" in msg
 
 
-def _run_once(args: list[str], prompt: str, timeout: int) -> dict:
+def _run_once(args: list[str], prompt: str, timeout: int, result_model: type[BaseModel]) -> dict:
     # An API key in the environment would take precedence over the subscription login.
     env = {k: v for k, v in os.environ.items() if k not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")}
     with tempfile.TemporaryDirectory(prefix="news-summary-") as cwd:
@@ -287,7 +295,7 @@ def _run_once(args: list[str], prompt: str, timeout: int) -> dict:
             raise SummaryTimeout(f"Claude took longer than {timeout}s")
     if proc.returncode != 0 and not proc.stdout.strip():
         raise SummaryError(f"Claude CLI exited with {proc.returncode}: {proc.stderr.strip()[:300]}")
-    return parse_cli_output(proc.stdout)
+    return parse_cli_output(proc.stdout, result_model)
 
 
 def range_key(start: dt.date | None, end: dt.date | None, today: dt.date | None = None) -> str:
@@ -295,6 +303,37 @@ def range_key(start: dt.date | None, end: dt.date | None, today: dt.date | None 
     if start is not None:
         return f"{start.isoformat()}:{end.isoformat()}"
     return f"latest:{(today or dt.date.today()).isoformat()}"
+
+
+# Financial analyses share the summaries cache and table, keyed "fin:<latest period end>".
+FIN_PREFIX = "fin:"
+
+
+def fin_key(period: str) -> str:
+    return FIN_PREFIX + period
+
+
+def key_fields(rk: str) -> dict:
+    """What a summary key covers: its kind, and the news dates or the financial period."""
+    if rk.startswith(FIN_PREFIX):
+        return {"kind": "financials", "start": None, "end": None, "period": rk[len(FIN_PREFIX):]}
+    if rk.startswith("latest:"):
+        return {"kind": "news", "start": None, "end": None, "period": None}
+    start, end = rk.split(":")
+    return {"kind": "news", "start": start, "end": end, "period": None}
+
+
+def badges(rk: str, summary: dict) -> dict:
+    """The labels shown next to a summary in lists."""
+    if rk.startswith(FIN_PREFIX):
+        return {
+            "health": (summary.get("health") or {}).get("label"),
+            "valuation": (summary.get("valuation") or {}).get("label"),
+        }
+    return {
+        "sentiment": (summary.get("sentiment") or {}).get("label"),
+        "stance": (summary.get("stance") or {}).get("action"),
+    }
 
 
 def now_iso() -> str:

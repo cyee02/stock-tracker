@@ -30,6 +30,18 @@ For stocks, the **Financials** tab (`?tab=financials`) shows the company's resul
 
 Periods are named by the month they end ("Jun '26"), because fiscal quarters rarely match calendar ones. Banks and insurers report no gross profit or cost breakdown, so they show net interest income instead, and their expenses as revenue minus pre-tax income.
 
+### AI financial analysis
+
+At the top of the tab, **Analyse with Claude** asks Claude to read the latest statements (the last four years and six quarters) and the ratios, and to compare the company with up to six peers. Peers come from Yahoo's lists of top companies in the same industry, then the rest of the sector when the industry is thin. Companies more than 50 times bigger or smaller are left out. The analysis shows:
+
+- a **one-sentence takeaway**, with a **financial health** label (strong / solid / mixed / weak) and a **valuation** label (looks cheap / fairly valued / looks expensive), each with Claude's reasoning
+- **metrics to watch**: up to six numbers that matter most for this company, with their trend and what to look for next
+- **compared with peers**: each ratio next to the peer median, marked better, in line or worse, with the peers listed
+- **from the statements**: notes on growth, profitability, cash flow and the balance sheet
+- **strengths** and **concerns**
+
+The figures next to Claude's comments come from the data, not from Claude. It runs, caches, saves and refreshes the same way as the news summary below, keyed by the latest reported period instead of a date range, so a new quarter's results get a new analysis.
+
 ## Watchlist
 
 **★ Watchlist** in the top bar (`/watchlist`) lists the tickers you save, with each one's latest session (open, high, low, close and the day's change), its 1-year mean-reversion signal with the 25th–75th percentile range, its 50/200-day SMA trend with the last cross, and its NAV (ETFs and funds) or next earnings date (stocks). Tap a ticker to open its chart.
@@ -72,11 +84,11 @@ It runs only when you click, as a **background job on the server**. You can leav
 
 A result is cached for an hour per ticker and date range, whether or not you save it. **Save** keeps it in the database, and **Refresh** asks Claude again. Opening the same ticker and day later shows the saved copy, with no new Claude call. A refreshed copy shows as *New version, not saved* until you save it, which replaces the old copy. Saved summaries for Latest news are kept per day, because that feed changes daily.
 
-**✦ AI Summaries** in the top bar (`/summaries`) shows every summary without loading a ticker first. It lists runs **in progress** (failed ones get a *Try again* link), results **not saved yet** (still in the 1-hour cache, with a **Save** button), and **saved** summaries, across all tickers, with a ticker filter. Expand any one to read it, or open the headlines it was made from. Only the owner can generate, save or delete summaries; share-link viewers can read the saved and cached ones.
+**✦ AI Summaries** in the top bar (`/summaries`) shows every summary without loading a ticker first. It covers news summaries and financial analyses, with an **All | News | Financials** filter next to the ticker filter (kept in the URL as `?kind=`). It lists runs **in progress** (failed ones get a *Try again* link), results **not saved yet** (still in the 1-hour cache, with a **Save** button), and **saved** summaries, across all tickers, with a ticker filter. Expand any one to read it, or open the headlines or financials it was made from. Only the owner can generate, save or delete summaries; share-link viewers can read the saved and cached ones.
 
 **It uses your Claude subscription, not an API key.** The backend runs the Claude Code CLI headless (`claude -p`), so usage counts against the Pro/Max plan the CLI is logged in with. Claude gets only the WebFetch tool (no shell, files or MCP servers), and `ANTHROPIC_API_KEY` is removed from the CLI's environment so it can't take over. A summary takes about a minute. Setup:
 
-1. Install Claude Code (`curl -fsSL https://claude.ai/install.sh | bash`) and run `claude` once to log in. Without it on PATH, the app falls back to the copy bundled with the VS Code extension.
+1. Install Claude Code (`curl -fsSL https://claude.ai/install.sh | bash`) and run `claude` once to log in. Without it on PATH, the app looks in `~/.local/bin` and `~/.claude/local`, then falls back to the copy bundled with the VS Code extension. The path is checked again before each run, so an extension update that moves the binary doesn't break summaries.
 2. Optional settings in `.env`: `CLAUDE_CLI` (path to the binary), `CLAUDE_MODEL` (e.g. `sonnet` or `opus`; the CLI's default otherwise), `CLAUDE_TIMEOUT_SECONDS` (default 240), `SUMMARY_TTL_SECONDS` (default 3600).
 
 The Fly.io image has no logged-in CLI, so summaries there return "Claude CLI not found". Saved summaries still display.
@@ -115,6 +127,7 @@ sessions, rotate `ADMIN_KEY` and revoke all links.
 ```
 backend/   FastAPI app (yfinance data, bands, SQLite share links, saved AI
            summaries and the watchlist, Claude CLI summarizer in app/summary.py,
+           financial analysis with peers in app/fin_summary.py,
            price-alert checker in app/alerts.py) + pytest tests
 frontend/  React + TypeScript + Vite, Plotly charts; public/ holds the web-app
            manifest, icons and the service worker for push notifications

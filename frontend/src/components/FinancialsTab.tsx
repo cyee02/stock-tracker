@@ -1,21 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, BalancePeriod, CashflowPeriod, FinancialsResponse, IncomePeriod, Statements } from "../api";
+import { api, BalancePeriod, CashflowPeriod, FinancialsResponse, FinSummaryResponse, IncomePeriod, Statements } from "../api";
 import { formatCompact, formatDay, periodLabel } from "../format";
-import { RATIO_GROUPS, RATIO_INFO, RatioFormat } from "../ratios";
+import { formatRatio, RATIO_GROUPS, RATIO_INFO } from "../ratios";
 import FinancialChart, { Series } from "./FinancialChart";
+import AiSummaryCard from "./AiSummaryCard";
+import FinSummaryView from "./FinSummaryView";
 import InfoTip from "./InfoTip";
 
 type Freq = "quarterly" | "annual";
 
 const hasData = (s: Series) => s.values.some((v) => v !== null);
-
-function formatRatio(v: number | null, format: RatioFormat): string {
-  if (v === null) return "—";
-  if (format === "pct") return `${(v * 100).toFixed(1)}%`;
-  if (format === "x") return `${v.toFixed(2)}x`;
-  if (format === "money") return formatCompact(v);
-  return v.toFixed(2);
-}
 
 /** Values of `key` for each period, null where that statement has no such period. */
 function pick<T extends { period: string }>(rows: T[], periods: string[], key: keyof T): (number | null)[] {
@@ -27,7 +21,7 @@ function minus(a: number | null, b: number | null): number | null {
   return a === null || b === null ? null : a - b;
 }
 
-export default function FinancialsTab({ ticker }: { ticker: string }) {
+export default function FinancialsTab({ ticker, isAdmin }: { ticker: string; isAdmin: boolean }) {
   const [data, setData] = useState<FinancialsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [freq, setFreq] = useState<Freq>("quarterly");
@@ -79,10 +73,30 @@ export default function FinancialsTab({ ticker }: { ticker: string }) {
         </span>
       </div>
 
+      <FinSummary ticker={data.ticker} isAdmin={isAdmin} />
       <Ratios data={data} />
       <Charts st={st} annual={annual} data={data} />
       <StatementTable st={st} annual={annual} />
     </div>
+  );
+}
+
+/** Claude's read of the latest financials: the metrics that matter here, and how the ratios compare with peers. */
+function FinSummary({ ticker, isAdmin }: { ticker: string; isAdmin: boolean }) {
+  return (
+    <AiSummaryCard<FinSummaryResponse>
+      title="AI financial analysis"
+      resetKey={ticker}
+      isAdmin={isAdmin}
+      peek={() => api.peekFinSummary(ticker)}
+      generate={(refresh) => api.finSummary(ticker, refresh)}
+      save={() => api.saveFinSummary(ticker)}
+      intro="Ask Claude which metrics matter most for this company, and how its ratios compare with similar companies in its industry."
+      buttonLabel="Analyse with Claude"
+      workingText="Claude is comparing the financials with peers… usually a minute or two"
+      noneText="No AI analysis of these financials yet."
+      render={(entry, footer) => <FinSummaryView entry={entry} footer={footer} />}
+    />
   );
 }
 
