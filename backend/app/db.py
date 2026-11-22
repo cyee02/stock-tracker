@@ -4,6 +4,8 @@ import secrets
 import sqlite3
 from datetime import datetime, timezone
 
+from app.summary import badges, key_fields
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS share_links (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -159,7 +161,7 @@ class Database:
         return _summary_row(row) if row else None
 
     def list_summaries(self, ticker: str | None = None) -> list[dict]:
-        """Saved summaries (one ticker's, or all), newest news first, without the full payload."""
+        """Saved summaries (one ticker's, or all), newest news or period first, without the full payload."""
         with self._connect() as conn:
             rows = conn.execute(
                 """
@@ -171,12 +173,9 @@ class Database:
         out = []
         for r in rows:
             full = _summary_row(r)
-            summary = full.pop("summary") or {}
-            for k in ("analyst", "price", "earnings", "articles_total"):
-                full.pop(k, None)
-            full["sentiment"] = (summary.get("sentiment") or {}).get("label")
-            full["stance"] = (summary.get("stance") or {}).get("action")
-            out.append(full)
+            summary = full.get("summary") or {}
+            row = {k: full[k] for k in ("id", "ticker", "range_key", "generated_at", "saved_at", "model")}
+            out.append({**row, **key_fields(r["range_key"]), **badges(r["range_key"], summary)})
         return out
 
     def delete_summary(self, summary_id: int) -> bool:

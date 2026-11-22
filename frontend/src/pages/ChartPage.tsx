@@ -185,7 +185,7 @@ export default function ChartPage({ isAdmin, active, navCount }: Props) {
             ))}
           </div>
           {shownTab === "financials" ? (
-            <FinancialsTab ticker={data.ticker} />
+            <FinancialsTab ticker={data.ticker} isAdmin={isAdmin} />
           ) : shownTab === "news" ? (
             <div className="card news-card" role="tabpanel">
               <NewsList

@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.config import Settings, get_settings
+from app.config import Settings, find_claude, get_settings
 from app.db import Database
 from app.market import (
     HistoryCache,
@@ -16,9 +16,11 @@ from app.market import (
     download_financials,
     download_history,
     download_news,
+    download_peers,
 )
 from app.alerts import live_price, send_push, start_checker
-from app.routes import admin, alerts, series, summaries, watchlist
+from app.fin_summary import FIN_SCHEMA, FinancialSummary
+from app.routes import admin, alerts, fin_summaries, series, summaries, watchlist
 from app.summary import SummaryCache, run_claude
 
 # Not in every platform's MIME table; browsers want this type for the PWA manifest.
@@ -35,6 +37,8 @@ def create_app(
     price_loader=live_price,
     pusher=send_push,
     summarizer=None,
+    peers_loader=download_peers,
+    fin_summarizer=None,
 ) -> FastAPI:
     settings = settings or get_settings()
 
@@ -60,14 +64,26 @@ def create_app(
     app.state.alert_checker = None
     # Keyed by (ticker, range key); see app.summary.range_key.
     app.state.summaries = SummaryCache(settings.summary_ttl_seconds)
-    # prompt -> {"summary": ..., "model": ...}
-    app.state.summarizer = summarizer or (
-        lambda prompt: run_claude(
+    # Comparable companies and their ratios, found from the company's industry and sector.
+    app.state.peers = TTLCache(
+        settings.cache_ttl_seconds,
+        lambda t: (fin := app.state.financials.get(t)) and peers_loader(t, fin.profile),
+    )
+
+    def claude(prompt: str, **kwargs) -> dict:
+        return run_claude(
             prompt,
-            cli=settings.claude_cli,
+            # The path found at startup can vanish (e.g. VS Code updates its extension), so look again.
+            cli=settings.claude_cli if settings.claude_cli and os.path.isfile(settings.claude_cli) else find_claude(),
             model=settings.claude_model,
             timeout=settings.claude_timeout_seconds,
+            **kwargs,
         )
+
+    # prompt -> {"summary": ..., "model": ...}
+    app.state.summarizer = summarizer or claude
+    app.state.fin_summarizer = fin_summarizer or (
+        lambda prompt: claude(prompt, schema=FIN_SCHEMA, result_model=FinancialSummary)
     )
 
     @app.get("/healthz")
@@ -76,6 +92,7 @@ def create_app(
 
     app.include_router(series.router)
     app.include_router(summaries.router)
+    app.include_router(fin_summaries.router)
     app.include_router(watchlist.router)
     app.include_router(alerts.router)
     app.include_router(admin.router)

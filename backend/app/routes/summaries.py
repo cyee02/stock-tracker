@@ -20,7 +20,16 @@ from app.market import (
     sma_trend,
 )
 from app.routes.series import _check_range, _history, _iso, _news_items, _num
-from app.summary import ClaudeUnavailable, SummaryError, SummaryTimeout, build_prompt, now_iso, range_key
+from app.summary import (
+    ClaudeUnavailable,
+    SummaryError,
+    SummaryTimeout,
+    badges,
+    build_prompt,
+    key_fields,
+    now_iso,
+    range_key,
+)
 
 router = APIRouter(prefix="/api/news")
 
@@ -107,9 +116,8 @@ def _candles(history: History, close: pd.Series) -> dict:
     return out
 
 
-def _response(ticker: str, start, end, saved: dict | None, cached: dict | None) -> dict:
+def _response(base: dict, saved: dict | None, cached: dict | None) -> dict:
     """The newer of the saved and cached summaries, with where it came from."""
-    base = {"ticker": ticker, "start": _iso(start), "end": _iso(end)}
     status = {
         "saved": saved is not None,
         "saved_id": saved["id"] if saved else None,
@@ -137,14 +145,19 @@ def get_summary(
     Never calls Claude; the page polls this while a background run is in progress.
     """
     ticker, rk = _key(ticker, start, end)
-    return _status(request.app.state, ticker, rk, start, end)
+    return summary_status(request.app.state, ticker, rk, _news_base(ticker, start, end))
 
 
-def _status(state, ticker: str, rk: str, start, end) -> dict:
+def _news_base(ticker: str, start, end) -> dict:
+    return {"ticker": ticker, "start": _iso(start), "end": _iso(end)}
+
+
+def summary_status(state, ticker: str, rk: str, base: dict) -> dict:
+    """Saved or cached summary for (ticker, rk) and whether a run is going; `base` identifies it."""
     saved = state.db.get_summary(ticker, rk)
     cached = state.summaries.peek((ticker, rk))
     job = state.summaries.job((ticker, rk))
-    out = _response(ticker, start, end, saved, cached)
+    out = _response(base, saved, cached)
     if job and "error" not in job:
         out["job"] = {"status": "running", "started_at": job["started_at"]}
     elif job:
@@ -164,8 +177,9 @@ def generate_summary(request: Request, body: GenerateRequest, _: Viewer = Depend
     ticker, rk = _key(body.ticker, body.start, body.end)
     start, end = body.start, body.end
     state = request.app.state
+    base = _news_base(ticker, start, end)
     if not body.refresh and (state.db.get_summary(ticker, rk) or state.summaries.peek((ticker, rk))):
-        return _status(state, ticker, rk, start, end)
+        return summary_status(state, ticker, rk, base)
 
     # Runs on a background thread after this request has returned; it only uses
     # request.app (via the shared helpers), never the request itself.
@@ -207,8 +221,8 @@ def generate_summary(request: Request, body: GenerateRequest, _: Viewer = Depend
             "articles_total": len(items),
         }
 
-    state.summaries.start((ticker, rk), generate, {"ticker": ticker, "start": _iso(start), "end": _iso(end)})
-    return _status(state, ticker, rk, start, end)
+    state.summaries.start((ticker, rk), generate, base)
+    return summary_status(state, ticker, rk, base)
 
 
 @router.post("/summaries")
@@ -221,13 +235,6 @@ def save_summary(request: Request, body: SummaryKey, _: Viewer = Depends(require
     return request.app.state.db.save_summary(ticker, rk, _iso(body.start), _iso(body.end), cached)
 
 
-def _split_range_key(rk: str) -> tuple[str | None, str | None]:
-    if rk.startswith("latest:"):
-        return None, None
-    start, end = rk.split(":")
-    return start, end
-
-
 @router.get("/summaries")
 def list_summaries(
     request: Request,
@@ -236,7 +243,7 @@ def list_summaries(
 ):
     """Saved summaries, plus cached ones not saved yet and runs in progress or failed.
 
-    Across all tickers unless `ticker` is given.
+    News summaries and financial analyses alike (`kind`), across all tickers unless `ticker` is given.
     """
     state = request.app.state
     ticker = ticker.strip().upper() if ticker else None
@@ -249,30 +256,24 @@ def list_summaries(
         # Already saved, and this is that same version (or an older one).
         if (t, rk) in saved_at and entry["generated_at"] <= saved_at[(t, rk)]:
             continue
-        start, end = _split_range_key(rk)
-        s = entry["summary"]
         unsaved.append({
             "ticker": t,
             "range_key": rk,
-            "start": start,
-            "end": end,
+            **key_fields(rk),
             "generated_at": entry["generated_at"],
             "expires_in": entry["expires_in"],
             "model": entry.get("model"),
-            "sentiment": s["sentiment"]["label"],
-            "stance": s["stance"]["action"],
+            **badges(rk, entry["summary"]),
             "replaces_saved": (t, rk) in saved_at,
         })
     jobs = []
     for (t, rk), job in state.summaries.jobs():
         if ticker and t != ticker:
             continue
-        start, end = _split_range_key(rk)
         jobs.append({
             "ticker": t,
             "range_key": rk,
-            "start": start,
-            "end": end,
+            **key_fields(rk),
             "status": "failed" if "error" in job else "running",
             "started_at": job.get("started_at"),
             "error": job.get("error"),
