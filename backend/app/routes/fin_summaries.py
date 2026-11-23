@@ -4,7 +4,7 @@ They live alongside the news summaries: same cache, same saved-summaries table a
 the same list at GET /api/news/summaries, keyed by the latest reported period.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from app.auth import Viewer, require_admin, require_viewer
@@ -22,6 +22,11 @@ class FinKey(BaseModel):
     ticker: str = Field(..., min_length=1, max_length=20)
     # The reporting period the analysis covers; the latest one when omitted.
     period: str | None = Field(None, pattern=PERIOD)
+
+
+class FinSaveRequest(FinKey):
+    # While a run is going: save its result when it finishes, instead of the cached one now.
+    when_done: bool = False
 
 
 class FinGenerateRequest(BaseModel):
@@ -110,13 +115,34 @@ def generate_fin_summary(request: Request, body: FinGenerateRequest, _: Viewer =
 
 
 @router.post("/summaries")
-def save_fin_summary(request: Request, body: FinKey, _: Viewer = Depends(require_admin)):
+def save_fin_summary(request: Request, body: FinSaveRequest, response: Response, _: Viewer = Depends(require_admin)):
     """Keep the cached analysis. Saving again replaces the saved copy.
 
-    Listed, fetched and deleted with the news summaries under /api/news/summaries.
+    With `when_done` while a run is going, the run saves its result as soon as it
+    finishes (202). Listed, fetched and deleted with the news summaries under
+    /api/news/summaries.
     """
     ticker, rk, period = _resolve(request, body.ticker, body.period)
-    cached = request.app.state.summaries.peek((ticker, rk))
+    state = request.app.state
+    if body.when_done and state.summaries.save_when_done(
+        (ticker, rk), lambda entry: state.db.save_summary(ticker, rk, None, period, entry)
+    ):
+        response.status_code = 202
+        return {**_base(ticker, period), "save_when_done": True}
+    cached = state.summaries.peek((ticker, rk))
     if cached is None:
         raise HTTPException(409, "This analysis has expired; analyse again to save it")
-    return request.app.state.db.save_summary(ticker, rk, None, period, cached)
+    return state.db.save_summary(ticker, rk, None, period, cached)
+
+
+@router.delete("/summary/save-when-done", status_code=204)
+def cancel_fin_save_when_done(
+    request: Request,
+    ticker: str = Query(..., min_length=1, max_length=20),
+    period: str | None = Query(None, pattern=PERIOD),
+    _: Viewer = Depends(require_admin),
+):
+    """Don't save the running analysis when it finishes after all."""
+    ticker, rk, _period = _resolve(request, ticker, period)
+    if not request.app.state.summaries.cancel_save((ticker, rk)):
+        raise HTTPException(409, "No analysis is being generated for this period")

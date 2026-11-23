@@ -6,6 +6,7 @@ import {
   SavedSummaryRow,
   SummariesOverview,
   SummaryEntry,
+  SummaryJobRow,
   SummaryKeyFields,
   UnsavedSummaryRow,
 } from "../api";
@@ -148,6 +149,24 @@ export default function SummariesPage({ isAdmin }: { isAdmin: boolean }) {
       .finally(() => setBusy(null));
   };
 
+  /** While a run is going: have it save its result when it finishes, or take that back. */
+  const saveWhenDone = (row: SummaryJobRow, on: boolean) => {
+    const id = rowId(row, "job");
+    setBusy(id);
+    setError(null);
+    const call = on
+      ? row.kind === "financials"
+        ? api.saveFinSummary(row.ticker, row.period, true)
+        : api.saveNewsSummary(row.ticker, rangeOf(row), true)
+      : row.kind === "financials"
+        ? api.cancelFinSaveWhenDone(row.ticker, row.period)
+        : api.cancelNewsSaveWhenDone(row.ticker, rangeOf(row));
+    call
+      .then(load)
+      .catch((e) => setError(e.message))
+      .finally(() => setBusy(null));
+  };
+
   const remove = (row: SavedSummaryRow) => {
     const what = row.kind === "financials" ? "financial analysis" : "summary";
     if (!window.confirm(`Delete the saved ${row.ticker} ${what} for ${summaryLabel(row)}?`)) return;
@@ -255,6 +274,27 @@ export default function SummariesPage({ isAdmin }: { isAdmin: boolean }) {
                     </span>
                     <span className="saved-actions">
                       <SourceLink row={row} />
+                      {isAdmin && row.status === "running" &&
+                        (row.save_when_done ? (
+                          <>
+                            <span className="saved-tag">Will save when done</span>
+                            <button
+                              className="link-button"
+                              onClick={() => saveWhenDone(row, false)}
+                              disabled={busy === rowId(row, "job")}
+                            >
+                              Don't save
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            className="ai-save"
+                            onClick={() => saveWhenDone(row, true)}
+                            disabled={busy === rowId(row, "job")}
+                          >
+                            Save when done
+                          </button>
+                        ))}
                       {isAdmin && row.status === "failed" && (
                         <button className="link-button" onClick={() => retry(row)}>
                           Try again

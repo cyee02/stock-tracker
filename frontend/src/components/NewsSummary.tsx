@@ -17,7 +17,8 @@ export default function NewsSummary({ ticker, range, isAdmin }: Props) {
       isAdmin={isAdmin}
       peek={() => api.peekNewsSummary(ticker, range)}
       generate={(refresh) => api.newsSummary(ticker, range, refresh)}
-      save={() => api.saveNewsSummary(ticker, range)}
+      save={(whenDone) => api.saveNewsSummary(ticker, range, whenDone)}
+      cancelSave={() => api.cancelNewsSaveWhenDone(ticker, range)}
       intro="Get Claude's read on these headlines: sentiment, a buy/hold/sell view, the top happenings, risks and more."
       buttonLabel="Summarize with Claude"
       workingText="Claude is reading the articles… usually a minute or two"

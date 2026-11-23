@@ -415,7 +415,10 @@ export type SavedAnySummary = SavedMeta & (SummaryEntry | FinSummaryEntry);
 
 export const isFinKey = (rangeKey: string) => rangeKey.startsWith("fin:");
 
-export type SummaryJobStatus = { status: "running"; started_at: string } | { status: "failed"; error: string };
+export type SummaryJobStatus =
+  /** `save_when_done`: the run saves its result as soon as it finishes. */
+  | { status: "running"; started_at: string; save_when_done: boolean }
+  | { status: "failed"; error: string };
 
 /** Identifies what a summary covers: the headlines (news) or the reporting period (financials). */
 export interface SummaryKeyFields {
@@ -438,6 +441,7 @@ export interface UnsavedSummaryRow extends SummaryKeyFields, SummaryBadges {
 export interface SummaryJobRow extends SummaryKeyFields {
   status: "running" | "failed";
   started_at: string | null;
+  save_when_done: boolean;
   error: string | null;
 }
 
@@ -523,11 +527,17 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ ticker, start: range?.start ?? null, end: range?.end ?? null, refresh }),
     }),
-  saveNewsSummary: (ticker: string, range?: DateRange | null) =>
-    request<SavedSummary>("/api/news/summaries", {
+  /** `whenDone` while a run is going: save its result when it finishes instead. */
+  saveNewsSummary: (ticker: string, range?: DateRange | null, whenDone = false) =>
+    request<unknown>("/api/news/summaries", {
       method: "POST",
-      body: JSON.stringify({ ticker, start: range?.start ?? null, end: range?.end ?? null }),
+      body: JSON.stringify({ ticker, start: range?.start ?? null, end: range?.end ?? null, when_done: whenDone }),
     }),
+  cancelNewsSaveWhenDone: (ticker: string, range?: DateRange | null) =>
+    request<void>(
+      `/api/news/summary/save-when-done?ticker=${encodeURIComponent(ticker)}${range ? `&start=${range.start}&end=${range.end}` : ""}`,
+      { method: "DELETE" },
+    ),
   /** Saved or cached analysis of the latest (or given) period's financials; never calls Claude. */
   peekFinSummary: (ticker: string, period?: string | null) =>
     request<FinSummaryResponse>(
@@ -538,11 +548,17 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ ticker, refresh }),
     }),
-  saveFinSummary: (ticker: string, period?: string | null) =>
+  /** `whenDone` while a run is going: save its result when it finishes instead. */
+  saveFinSummary: (ticker: string, period?: string | null, whenDone = false) =>
     request<unknown>("/api/financials/summaries", {
       method: "POST",
-      body: JSON.stringify({ ticker, period: period ?? null }),
+      body: JSON.stringify({ ticker, period: period ?? null, when_done: whenDone }),
     }),
+  cancelFinSaveWhenDone: (ticker: string, period?: string | null) =>
+    request<void>(
+      `/api/financials/summary/save-when-done?ticker=${encodeURIComponent(ticker)}${period ? `&period=${period}` : ""}`,
+      { method: "DELETE" },
+    ),
   /** Saved, unsaved-but-cached and in-progress summaries of both kinds; all tickers unless one is given. */
   summariesOverview: (ticker?: string) =>
     request<SummariesOverview>(`/api/news/summaries${ticker ? `?ticker=${encodeURIComponent(ticker)}` : ""}`),

@@ -265,6 +265,76 @@ def test_run_continues_in_background_and_is_joined(client):
     assert len(calls) == 1
 
 
+def _slow_run(client):
+    """Start a run that waits for the returned event, like Claude taking a minute."""
+    import threading
+
+    release = threading.Event()
+
+    def slow(prompt):
+        release.wait(5)
+        return {"summary": SUMMARY, "model": "m"}
+
+    client.app.state.summarizer = slow
+    assert client.post("/api/news/summary", json={"ticker": "fake"}, headers=AUTH).status_code == 202
+    return release
+
+
+def test_save_when_done_saves_the_result_once_the_run_finishes(client):
+    release = _slow_run(client)
+    r = client.post("/api/news/summaries", json={"ticker": "fake", "when_done": True}, headers=AUTH)
+    assert r.status_code == 202 and r.json()["save_when_done"] is True
+    body = client.get("/api/news/summary?ticker=fake", headers=AUTH).json()
+    assert body["job"] == {"status": "running", "started_at": body["job"]["started_at"], "save_when_done": True}
+    assert body["saved"] is False
+    (job,) = client.get("/api/news/summaries", headers=AUTH).json()["jobs"]
+    assert job["save_when_done"] is True
+
+    release.set()
+    client.app.state.summaries.wait()
+    body = client.get("/api/news/summary?ticker=fake", headers=AUTH).json()
+    assert body["saved"] is True and body["source"] == "saved" and body["job"] is None
+    listing = client.get("/api/news/summaries", headers=AUTH).json()
+    assert len(listing["items"]) == 1 and listing["unsaved"] == []
+
+
+def test_save_when_done_can_be_cancelled(client):
+    release = _slow_run(client)
+    client.post("/api/news/summaries", json={"ticker": "fake", "when_done": True}, headers=AUTH)
+    assert client.delete("/api/news/summary/save-when-done?ticker=fake", headers=AUTH).status_code == 204
+    assert client.get("/api/news/summary?ticker=fake", headers=AUTH).json()["job"]["save_when_done"] is False
+    release.set()
+    client.app.state.summaries.wait()
+    body = client.get("/api/news/summary?ticker=fake", headers=AUTH).json()
+    assert body["summary"] is not None and body["saved"] is False
+    # Nothing running any more.
+    assert client.delete("/api/news/summary/save-when-done?ticker=fake", headers=AUTH).status_code == 409
+
+
+def test_save_when_done_after_the_run_finished_saves_directly(client):
+    summarize(client)
+    r = client.post("/api/news/summaries", json={"ticker": "fake", "when_done": True}, headers=AUTH)
+    assert r.status_code == 200 and r.json()["id"]
+
+
+def test_failed_run_saves_nothing(client):
+    client.fail = SummaryError("bad")
+    r = client.post("/api/news/summary", json={"ticker": "fake"}, headers=AUTH)
+    assert r.status_code == 202
+    client.post("/api/news/summaries", json={"ticker": "fake", "when_done": True}, headers=AUTH)
+    client.app.state.summaries.wait()
+    assert client.get("/api/news/summaries", headers=AUTH).json()["items"] == []
+
+
+def test_viewer_cannot_save_when_done(client):
+    release = _slow_run(client)
+    v = viewer_auth(client)
+    r = client.post("/api/news/summaries", json={"ticker": "fake", "when_done": True}, headers=v)
+    assert r.status_code == 403
+    assert client.delete("/api/news/summary/save-when-done?ticker=fake", headers=v).status_code == 403
+    release.set()
+
+
 def test_overview_lists_unsaved_and_saved_across_tickers(client):
     summarize(client)
     summarize(client, start="2024-07-24", end="2024-07-25")
