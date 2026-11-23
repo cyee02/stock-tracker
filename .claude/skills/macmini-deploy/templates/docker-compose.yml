@@ -6,7 +6,8 @@
 # makes Tailscale-User-Login headers trustworthy, if the app reads them).
 # Don't publish ports or bind the app to 0.0.0.0.
 #
-# Deploy with ./deploy/deploy.sh. Keys come from the shell environment; see
+# Deploy with ./deploy/deploy.sh. Keys come from the shell environment (the
+# sidecar's is TS_AUTHKEY___APP_ENV__); see
 # deploy/zshrc.example. Don't run `docker compose config` where its output is
 # kept: it prints the resolved keys.
 #
@@ -21,7 +22,11 @@ services:
     image: tailscale/tailscale:stable
     hostname: *tailnet_name
     environment:
-      TS_AUTHKEY: ${TS_AUTHKEY:-}
+      # This app's own key (one per app: a one-off key logs in one machine).
+      TS_AUTHKEY: ${TS_AUTHKEY___APP_ENV__:-}
+      # Use the key only when not already logged in (state is in the volume),
+      # so restarts don't depend on a key that may have expired since.
+      TS_AUTH_ONCE: "true"
       TS_HOSTNAME: *tailnet_name
       TS_STATE_DIR: /var/lib/tailscale
       TS_SERVE_CONFIG: /config/serve.json

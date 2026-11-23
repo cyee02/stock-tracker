@@ -3,11 +3,11 @@
 # GitHub Actions runner calls it. They never go to GitHub.
 # One set serves every app on the Mac mini.
 
-# Tailscale auth key, used only for each app's first start (the sidecar's
-# identity is then kept in its tailscale-state volume). Create one at
-# https://login.tailscale.com/admin/settings/keys. Make it *reusable* (with an
-# expiry) if several apps will deploy for the first time with it.
-export TS_AUTHKEY="tskey-auth-REPLACE_ME"
+# One Tailscale auth key per app: TS_AUTHKEY_<REPO>, uppercased with - as _
+# (e.g. TS_AUTHKEY_MQF_SHORTS). It's used only for that app's first start; the
+# sidecar's identity is then kept in its tailscale-state volume. Create keys at
+# https://login.tailscale.com/admin/settings/keys
+export TS_AUTHKEY___APP_ENV__="tskey-auth-REPLACE_ME"
 
 # Long-lived Claude token for apps that call the Claude CLI: run
 # `claude setup-token` on any machine where you can sign in to Claude.
