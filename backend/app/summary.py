@@ -9,6 +9,7 @@ articles with its WebFetch tool, and answers in JSON matching SUMMARY_SCHEMA.
 import dataclasses
 import datetime as dt
 import json
+import logging
 import os
 import subprocess
 import tempfile
@@ -19,6 +20,8 @@ from typing import Literal
 from pydantic import BaseModel, Field, ValidationError
 
 from app.market import AnalystData, NewsItem
+
+log = logging.getLogger(__name__)
 
 # Headlines sent to Claude; the feeds return at most 20 (Yahoo) or 100 (Google).
 MAX_ITEMS = 40
@@ -352,13 +355,15 @@ class SummaryCache:
 
     A job runs in its own thread, so it finishes even if the browser navigates
     away or closes; the page polls for the result. Starting a job for a key
-    that already has one running joins it instead of starting another.
+    that already has one running joins it instead of starting another. A running
+    job can be told to save its result when it finishes (see save_when_done).
     """
 
     def __init__(self, ttl_seconds: int):
         self.ttl = ttl_seconds
         self._data: dict[tuple, tuple[float, dict]] = {}
-        # key -> {"started_at", "meta", "thread"} while running, or {"error", "failed_at", "meta"} after failing
+        # key -> {"started_at", "meta", "thread", "autosave"} while running,
+        # or {"error", "failed_at", "meta"} after failing
         self._jobs: dict[tuple, dict] = {}
         self._lock = threading.Lock()
         self._slots = threading.BoundedSemaphore(MAX_CONCURRENT_RUNS)
@@ -384,7 +389,14 @@ class SummaryCache:
             if job and "failed_at" in job and time.monotonic() - job["failed_at"] > ERROR_TTL_SECONDS:
                 del self._jobs[key]
                 job = None
-        return {k: v for k, v in job.items() if k not in ("thread", "failed_at")} if job else None
+        return self._public(job) if job else None
+
+    @staticmethod
+    def _public(job: dict) -> dict:
+        out = {k: v for k, v in job.items() if k not in ("thread", "failed_at", "autosave")}
+        if "thread" in job:
+            out["save_when_done"] = job.get("autosave") is not None
+        return out
 
     def jobs(self) -> list[tuple[tuple, dict]]:
         with self._lock:
@@ -396,13 +408,35 @@ class SummaryCache:
         with self._lock:
             job = self._jobs.get(key)
             if job and "thread" in job:
-                return {k: v for k, v in job.items() if k != "thread"}
-            job = {"started_at": now_iso(), "meta": meta}
+                return self._public(job)
+            job = {"started_at": now_iso(), "meta": meta, "autosave": None}
             thread = threading.Thread(target=self._run, args=(key, generate), daemon=True)
             job["thread"] = thread
             self._jobs[key] = job
         thread.start()
-        return {k: v for k, v in job.items() if k != "thread"}
+        return self._public(job)
+
+    def save_when_done(self, key: tuple, saver) -> bool:
+        """Have the running job for `key` pass its result to `saver` when it finishes.
+
+        False when no run is going, in which case its result (if any) is already in
+        the cache and can be saved directly.
+        """
+        with self._lock:
+            job = self._jobs.get(key)
+            if not job or "thread" not in job:
+                return False
+            job["autosave"] = saver
+            return True
+
+    def cancel_save(self, key: tuple) -> bool:
+        """Undo save_when_done; False when no run is going."""
+        with self._lock:
+            job = self._jobs.get(key)
+            if not job or "thread" not in job:
+                return False
+            job["autosave"] = None
+            return True
 
     def _run(self, key: tuple, generate) -> None:
         with self._slots:
@@ -416,7 +450,13 @@ class SummaryCache:
                 return
         with self._lock:
             self._data[key] = (time.monotonic(), value)
-            self._jobs.pop(key, None)
+            saver = (self._jobs.pop(key, None) or {}).get("autosave")
+        if saver:
+            try:
+                saver(value)
+            except Exception:
+                # The result is still in the cache, where it can be saved by hand.
+                log.exception("saving the finished summary for %s failed", key)
 
     def wait(self, timeout: float = 10) -> None:
         """Block until every running job is done (for tests)."""

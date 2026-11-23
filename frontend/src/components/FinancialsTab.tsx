@@ -90,7 +90,8 @@ function FinSummary({ ticker, isAdmin }: { ticker: string; isAdmin: boolean }) {
       isAdmin={isAdmin}
       peek={() => api.peekFinSummary(ticker)}
       generate={(refresh) => api.finSummary(ticker, refresh)}
-      save={() => api.saveFinSummary(ticker)}
+      save={(whenDone) => api.saveFinSummary(ticker, null, whenDone)}
+      cancelSave={() => api.cancelFinSaveWhenDone(ticker)}
       intro="Ask Claude which metrics matter most for this company, and how its ratios compare with similar companies in its industry."
       buttonLabel="Analyse with Claude"
       workingText="Claude is comparing the financials with peers… usually a minute or two"

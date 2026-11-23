@@ -211,3 +211,34 @@ def test_viewer_cannot_generate(client):
     v = {"Authorization": f"Bearer {token}"}
     assert client.post("/api/financials/summary", json={"ticker": "fake"}, headers=v).status_code == 403
     assert client.get("/api/financials/summary?ticker=fake", headers=v).status_code == 200
+
+
+def test_save_when_done(client):
+    import threading
+
+    release = threading.Event()
+    client.app.state.fin_summarizer = lambda prompt: release.wait(5) and {"summary": FIN_SUMMARY, "model": "m"}
+    assert client.post("/api/financials/summary", json={"ticker": "fake"}, headers=AUTH).status_code == 202
+    r = client.post("/api/financials/summaries", json={"ticker": "fake", "when_done": True}, headers=AUTH)
+    assert r.status_code == 202 and r.json()["period"] == "2026-06-30"
+    assert client.get("/api/financials/summary?ticker=fake", headers=AUTH).json()["job"]["save_when_done"] is True
+
+    release.set()
+    client.app.state.summaries.wait()
+    body = client.get("/api/financials/summary?ticker=fake", headers=AUTH).json()
+    assert body["saved"] is True and body["source"] == "saved"
+    (row,) = client.get("/api/news/summaries", headers=AUTH).json()["items"]
+    assert (row["kind"], row["period"]) == ("financials", "2026-06-30")
+
+
+def test_cancel_save_when_done(client):
+    import threading
+
+    release = threading.Event()
+    client.app.state.fin_summarizer = lambda prompt: release.wait(5) and {"summary": FIN_SUMMARY, "model": "m"}
+    client.post("/api/financials/summary", json={"ticker": "fake"}, headers=AUTH)
+    client.post("/api/financials/summaries", json={"ticker": "fake", "when_done": True}, headers=AUTH)
+    assert client.delete("/api/financials/summary/save-when-done?ticker=fake", headers=AUTH).status_code == 204
+    release.set()
+    client.app.state.summaries.wait()
+    assert client.get("/api/financials/summary?ticker=fake", headers=AUTH).json()["saved"] is False

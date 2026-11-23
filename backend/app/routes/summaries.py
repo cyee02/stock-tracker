@@ -4,7 +4,7 @@ import dataclasses
 import datetime as dt
 
 import pandas as pd
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from app.auth import Viewer, require_admin, require_viewer
@@ -45,6 +45,11 @@ class SummaryKey(BaseModel):
 
 class GenerateRequest(SummaryKey):
     refresh: bool = False
+
+
+class SaveRequest(SummaryKey):
+    # While a run is going: save its result when it finishes, instead of the cached one now.
+    when_done: bool = False
 
 
 def _key(ticker: str, start: dt.date | None, end: dt.date | None) -> tuple[str, str]:
@@ -159,7 +164,7 @@ def summary_status(state, ticker: str, rk: str, base: dict) -> dict:
     job = state.summaries.job((ticker, rk))
     out = _response(base, saved, cached)
     if job and "error" not in job:
-        out["job"] = {"status": "running", "started_at": job["started_at"]}
+        out["job"] = {"status": "running", "started_at": job["started_at"], "save_when_done": job["save_when_done"]}
     elif job:
         out["job"] = {"status": "failed", "error": job["error"]}
     else:
@@ -226,13 +231,39 @@ def generate_summary(request: Request, body: GenerateRequest, _: Viewer = Depend
 
 
 @router.post("/summaries")
-def save_summary(request: Request, body: SummaryKey, _: Viewer = Depends(require_admin)):
-    """Keep the cached summary for these headlines. Saving again replaces the saved copy."""
+def save_summary(request: Request, body: SaveRequest, response: Response, _: Viewer = Depends(require_admin)):
+    """Keep the cached summary for these headlines. Saving again replaces the saved copy.
+
+    With `when_done` while a run is going, the run saves its result as soon as it
+    finishes, even if nobody is watching (202). Once it has finished, this saves
+    the result directly.
+    """
     ticker, rk = _key(body.ticker, body.start, body.end)
-    cached = request.app.state.summaries.peek((ticker, rk))
+    state = request.app.state
+    start, end = _iso(body.start), _iso(body.end)
+    if body.when_done and state.summaries.save_when_done(
+        (ticker, rk), lambda entry: state.db.save_summary(ticker, rk, start, end, entry)
+    ):
+        response.status_code = 202
+        return {**_news_base(ticker, body.start, body.end), "save_when_done": True}
+    cached = state.summaries.peek((ticker, rk))
     if cached is None:
         raise HTTPException(409, "This summary has expired; summarize again to save it")
-    return request.app.state.db.save_summary(ticker, rk, _iso(body.start), _iso(body.end), cached)
+    return state.db.save_summary(ticker, rk, start, end, cached)
+
+
+@router.delete("/summary/save-when-done", status_code=204)
+def cancel_save_when_done(
+    request: Request,
+    ticker: str = Query(..., min_length=1, max_length=20),
+    start: dt.date | None = Query(None),
+    end: dt.date | None = Query(None),
+    _: Viewer = Depends(require_admin),
+):
+    """Don't save the running summary when it finishes after all."""
+    ticker, rk = _key(ticker, start, end)
+    if not request.app.state.summaries.cancel_save((ticker, rk)):
+        raise HTTPException(409, "No summary is being generated for these headlines")
 
 
 @router.get("/summaries")
@@ -276,6 +307,7 @@ def list_summaries(
             **key_fields(rk),
             "status": "failed" if "error" in job else "running",
             "started_at": job.get("started_at"),
+            "save_when_done": job.get("save_when_done", False),
             "error": job.get("error"),
         })
     return {"items": saved, "unsaved": unsaved, "jobs": jobs}

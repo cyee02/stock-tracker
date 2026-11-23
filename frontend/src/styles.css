@@ -252,6 +252,8 @@ tr.revoked td { color: var(--fg-muted); }
 .ai-status { display: inline-flex; align-items: center; gap: 6px 14px; flex-wrap: wrap; }
 .ai-save { padding: 4px 12px; font-size: 13px; }
 .saved-tag { color: var(--ok-fg); font-weight: 600; }
+.ai-presave { display: inline-flex; align-items: center; gap: 12px; }
+.ai-presave-row { margin: 8px 0 0; }
 
 .saved-list { list-style: none; margin: 8px 0 0; padding: 0; }
 .saved-list > li { padding: 10px 0; border-bottom: 1px solid var(--border); }
@@ -261,7 +263,7 @@ tr.revoked td { color: var(--fg-muted); }
 .saved-toggle { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; background: none; border: none; padding: 0; color: var(--fg); font-weight: 500; text-align: left; }
 .saved-caret { width: 14px; color: var(--fg-muted); }
 .saved-when { font-size: 13px; }
-.saved-actions { display: inline-flex; gap: 16px; }
+.saved-actions { display: inline-flex; align-items: center; gap: 16px; }
 .danger-link { color: var(--warn-fg); }
 
 /* Top navigation and the AI Summaries page */

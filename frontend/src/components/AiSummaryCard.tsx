@@ -26,7 +26,10 @@ interface Props<R extends SummaryResponseLike> {
   /** The saved or cached summary and run status; never starts a run. */
   peek: () => Promise<R>;
   generate: (refresh: boolean) => Promise<R>;
-  save: () => Promise<unknown>;
+  /** Save the cached summary, or with `whenDone` have the running job save its result when it finishes. */
+  save: (whenDone: boolean) => Promise<unknown>;
+  /** Undo save(true) while the run is still going. */
+  cancelSave: () => Promise<unknown>;
   intro: ReactNode;
   buttonLabel: string;
   workingText: string;
@@ -41,6 +44,8 @@ function secondsSince(iso: string): number {
 /**
  * A Claude summary card. Clicking starts a run on the server, which keeps going
  * if you leave the page; this polls until the result is ready, then offers Save.
+ * The owner can also save ahead, while it runs: the server then saves the result
+ * when the run finishes, even if nobody has the page open.
  */
 export default function AiSummaryCard<R extends SummaryResponseLike>(props: Props<R>) {
   const { resetKey, isAdmin, peek } = props;
@@ -94,12 +99,24 @@ export default function AiSummaryCard<R extends SummaryResponseLike>(props: Prop
     props.generate(refresh).then(show(current.current)).catch((e) => setError(e.message));
   };
 
-  const save = () => {
+  const save = (whenDone: boolean) => {
     const key = current.current;
     setSaving(true);
     setError(null);
     props
-      .save()
+      .save(whenDone)
+      .then(() => peek())
+      .then(show(key))
+      .catch((e) => setError(e.message))
+      .finally(() => setSaving(false));
+  };
+
+  const cancelSave = () => {
+    const key = current.current;
+    setSaving(true);
+    setError(null);
+    props
+      .cancelSave()
       .then(() => peek())
       .then(show(key))
       .catch((e) => setError(e.message))
@@ -109,6 +126,24 @@ export default function AiSummaryCard<R extends SummaryResponseLike>(props: Prop
   const data = resp?.summary ? (resp as Loaded<R>) : null;
   const job = resp?.job ?? null;
   const startedAt = job?.status === "running" ? job.started_at : null;
+  const saveWhenDone = job?.status === "running" && job.save_when_done;
+
+  // While a run is going: save its result ahead of time, or take that back.
+  const preSave =
+    isAdmin && running ? (
+      saveWhenDone ? (
+        <span className="ai-presave">
+          <span className="saved-tag">Will save when done</span>
+          <button className="link-button" onClick={cancelSave} disabled={saving}>
+            Don't save
+          </button>
+        </span>
+      ) : (
+        <button className="ai-save" onClick={() => save(true)} disabled={saving}>
+          {saving ? "Saving…" : data?.saved ? "Save when done (replace saved)" : "Save when done"}
+        </button>
+      )
+    ) : null;
 
   let body;
   if (peeking) body = <p className="muted">Checking for a summary…</p>;
@@ -123,6 +158,7 @@ export default function AiSummaryCard<R extends SummaryResponseLike>(props: Prop
           <p className="muted">
             It keeps running if you leave this page. You'll find it under <a href="/summaries">AI Summaries</a>.
           </p>
+          {preSave && <p className="ai-presave-row">{preSave}</p>}
         </div>
       </div>
     );
@@ -151,8 +187,9 @@ export default function AiSummaryCard<R extends SummaryResponseLike>(props: Prop
           <span>Not saved · cached for {Math.max(1, Math.round((data.expires_in ?? 0) / 60))}m</span>
         )}
         <span>Generated {formatRelative(data.generated_at)}</span>
-        {isAdmin && unsaved && (
-          <button className="ai-save" onClick={save} disabled={saving}>
+        {preSave}
+        {isAdmin && unsaved && !running && (
+          <button className="ai-save" onClick={() => save(false)} disabled={saving}>
             {saving ? "Saving…" : data.saved ? "Save (replace saved)" : "Save"}
           </button>
         )}
