@@ -1,0 +1,24 @@
+# Add these to ~/.zshrc on the Mac mini (then `chmod 600 ~/.zshrc`).
+# deploy/deploy.sh reads them from your environment, or from ~/.zshrc when the
+# GitHub Actions runner calls it. They never go to GitHub.
+
+# Tailscale auth key, needed only for the first start (the node's identity is
+# then kept in the tailscale-state volume). Create one at
+# https://login.tailscale.com/admin/settings/keys
+export TS_AUTHKEY="tskey-auth-REPLACE_ME"
+
+# Long-lived Claude token for the AI summaries: run `claude setup-token` on any
+# machine where you can sign in to Claude, and paste the sk-ant-oat01-... value.
+export CLAUDE_CODE_OAUTH_TOKEN="REPLACE_ME"
+
+# Tailnet logins allowed in, comma-separated. Unset = anyone on your tailnet.
+export TAILSCALE_ALLOWED_LOGINS="you@example.com"
+
+# Your time zone; "Latest news" summaries are saved per local day.
+export TZ="Asia/Singapore"
+
+# Optional
+# export TS_HOSTNAME="stock-tracker"   # served at https://<TS_HOSTNAME>.<tailnet>.ts.net
+# export CLAUDE_MODEL="sonnet"
+# export ADMIN_KEY="..."               # lets callers off the tailnet in with ?t=<key> (16+ chars)
+# export ALERT_INTERVAL_SECONDS=300

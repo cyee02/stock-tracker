@@ -1,0 +1,67 @@
+# Tailnet deployment: the app plus a Tailscale sidecar that serves it over HTTPS
+# at https://<TS_HOSTNAME>.<tailnet>.ts.net. Nothing is published on the host.
+#
+# The app shares the sidecar's network namespace and binds 127.0.0.1, so the
+# only way in is `tailscale serve` proxying over loopback. That is the
+# condition backend/app/auth.py relies on to trust the Tailscale-User-Login
+# header, the same as scripts/start-tailscale.sh. Don't publish the app's port
+# or bind it to 0.0.0.0.
+#
+# Deploy with ./deploy/deploy.sh. Settings and keys (TS_AUTHKEY,
+# CLAUDE_CODE_OAUTH_TOKEN, ...) come from the shell environment; see
+# deploy/zshrc.example. Don't run `docker compose config` where its output is
+# kept: it prints the resolved keys.
+
+services:
+  tailscale:
+    image: tailscale/tailscale:stable
+    hostname: ${TS_HOSTNAME:-stock-tracker}
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:-}
+      TS_HOSTNAME: ${TS_HOSTNAME:-stock-tracker}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_SERVE_CONFIG: /config/serve.json
+      TS_USERSPACE: "true"
+      TS_EXTRA_ARGS: ${TS_EXTRA_ARGS:-}
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+      - ./deploy/tailscale-serve.json:/config/serve.json:ro
+    restart: unless-stopped
+
+  app:
+    build: .
+    image: stock-tracker:latest
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+    command:
+      - uvicorn
+      - --factory
+      - app.main:create_app
+      - --host
+      - 127.0.0.1
+      - --port
+      - "8080"
+      - --no-proxy-headers
+    environment:
+      TAILSCALE_AUTH: "1"
+      TAILSCALE_ALLOWED_LOGINS: ${TAILSCALE_ALLOWED_LOGINS:-}
+      ADMIN_KEY: ${ADMIN_KEY:-}
+      DB_PATH: /data/app.db
+      TZ: ${TZ:-UTC}
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+      CLAUDE_MODEL: ${CLAUDE_MODEL:-}
+      ALERT_INTERVAL_SECONDS: ${ALERT_INTERVAL_SECONDS:-300}
+    volumes:
+      - app-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  app-data:
+  tailscale-state:
