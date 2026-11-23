@@ -16,7 +16,20 @@ printf '%s' "$cmd" | grep -Eq '(^|[;&|[:space:]])gh[[:space:]]+pr[[:space:]]+cre
 # Explicit override.
 printf '%s' "$cmd" | grep -q 'PR_README_OK=1' && exit 0
 
-cd "${CLAUDE_PROJECT_DIR:-$PWD}" 2>/dev/null || exit 0
+# Check the repo the PR is for: the directory a leading `cd <dir> &&` moves to
+# (e.g. a worktree or another repo), else this project.
+target="${CLAUDE_PROJECT_DIR:-$PWD}"
+cd_dir="$(printf '%s' "$cmd" | sed -nE "1s/^[[:space:]]*cd[[:space:]]+(\"([^\"]+)\"|'([^']+)'|([^[:space:];&|]+)).*/\2\3\4/p")"
+if [ -n "$cd_dir" ]; then
+  case "$cd_dir" in
+    "~") cd_dir="$HOME" ;;
+    "~/"*) cd_dir="$HOME/${cd_dir#\~/}" ;;
+    /*) ;;
+    *) cd_dir="$target/$cd_dir" ;;
+  esac
+  [ -d "$cd_dir" ] && target="$cd_dir"
+fi
+cd "$target" 2>/dev/null || exit 0
 
 # symbolic-ref, not rev-parse: rev-parse echoes "origin/HEAD" back when unset.
 base="$(git symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')"
