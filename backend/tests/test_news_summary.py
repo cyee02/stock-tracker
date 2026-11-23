@@ -43,9 +43,11 @@ SUMMARY = {
 
 
 def fake_loader(ticker, start=None):
-    idx = pd.bdate_range(end=pd.Timestamp.today().normalize(), periods=600)
+    # Fixed start, so the dated-range test (July 2024) stays inside the history
+    # however far "today" moves on.
+    idx = pd.bdate_range(start="2024-01-02", end=pd.Timestamp.today().normalize())
     info = TickerInfo(name="Fake Corp", quote_type="EQUITY", earnings_date=dt.date(2026, 10, 27))
-    close = pd.Series(np.linspace(50, 150, 600), index=idx)
+    close = pd.Series(np.linspace(50, 150, len(idx)), index=idx)
     ohlc = pd.DataFrame({"Open": close - 1, "High": close + 2, "Low": close - 3}, index=idx)
     return History(close=close, currency="USD", info=info, ohlc=ohlc)
 

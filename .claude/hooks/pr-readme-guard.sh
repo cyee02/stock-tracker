@@ -20,7 +20,7 @@ cd "${CLAUDE_PROJECT_DIR:-$PWD}" 2>/dev/null || exit 0
 
 # symbolic-ref, not rev-parse: rev-parse echoes "origin/HEAD" back when unset.
 base="$(git symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')"
-case "$base" in ""|HEAD) base=master ;; esac
+case "$base" in ""|HEAD) base=main ;; esac
 
 # Prefer the pushed base; fall back to the local branch. If neither exists there
 # is nothing to diff against, so stay out of the way.

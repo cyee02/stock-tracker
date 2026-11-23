@@ -93,7 +93,7 @@ A result is cached for an hour per ticker and date range, whether or not you sav
 1. Install Claude Code (`curl -fsSL https://claude.ai/install.sh | bash`) and run `claude` once to log in. Without it on PATH, the app looks in `~/.local/bin` and `~/.claude/local`, then falls back to the copy bundled with the VS Code extension. The path is checked again before each run, so an extension update that moves the binary doesn't break summaries.
 2. Optional settings in `.env`: `CLAUDE_CLI` (path to the binary), `CLAUDE_MODEL` (e.g. `sonnet` or `opus`; the CLI's default otherwise), `CLAUDE_TIMEOUT_SECONDS` (default 240), `SUMMARY_TTL_SECONDS` (default 3600).
 
-The Fly.io image has no logged-in CLI, so summaries there return "Claude CLI not found". Saved summaries still display.
+The Docker image includes the CLI. It can't log in interactively, so it uses a long-lived token: run `claude setup-token` on any machine where you can sign in, and pass the `sk-ant-oat01-…` value as `CLAUDE_CODE_OAUTH_TOKEN` (in `~/.zshrc` for the [Mac mini](#deploy-to-a-mac-mini), or `fly secrets set` on Fly.io). Without it, summaries fail with "Not logged in". Saved summaries still display.
 
 Windows are measured in trading days: 3m = 63, 6m = 126, 1y = 252, 3y = 756, 5y = 1260, 10y = 2520.
 
@@ -135,8 +135,13 @@ frontend/  React + TypeScript + Vite, Plotly charts; public/ holds the web-app
            manifest, icons and the service worker for push notifications
 scripts/   dev.sh — local setup and run; restart.sh — restart on the current branch;
            start-/restart-/stop-tailscale.sh — serve to your tailnet
-.claude/   Claude Code config: the pr-readme skill and the hook that enforces it
-Dockerfile Single container: builds the frontend and serves it from FastAPI
+.claude/   Claude Code config: the pr-readme skill and the hook that enforces it;
+           the no-secret-leaks skill and its scanner (scan.py)
+.github/   workflows/deploy.yml — tests, then deploys to the Mac mini on push to main
+deploy/    deploy.sh — build and restart the Docker deployment; zshrc.example;
+           tailscale-serve.json — the sidecar's HTTPS → app proxy config
+Dockerfile Single container: builds the frontend, adds the Claude CLI, serves from FastAPI
+docker-compose.yml  The app plus a Tailscale sidecar, for the Mac mini
 fly.toml   Fly.io deployment config
 ```
 
@@ -223,6 +228,142 @@ Notes and caveats:
 - Your machine has to be awake and online. On a Mac, `caffeinate -s ./scripts/start-tailscale.sh` keeps it from sleeping while serving.
 - The identity headers are trusted because uvicorn binds to `127.0.0.1` and Tailscale is the only way in. **Do not** change the script to bind `0.0.0.0`, and do not add `--proxy-headers`/`--forwarded-allow-ips` to it: with those, the peer address comes from a caller-supplied `X-Forwarded-For` and the check in `backend/app/auth.py` can be fooled.
 - **Never run `tailscale funnel` on this app** while relying on tailnet identity. Funnel publishes the endpoint to the public internet. Requests arriving that way are refused rather than trusted, but you'd be exposing the service deliberately — use `ADMIN_KEY` instead if you want that.
+
+## Deploy to a Mac mini
+
+Every push to `main` runs the tests on GitHub, then deploys to a Mac mini with
+Docker. The app runs in Docker with a **Tailscale sidecar** container that joins
+your tailnet as its own machine and serves the app at
+`https://stock-tracker.<tailnet>.ts.net`. No port is opened on the Mac mini.
+
+How it fits together:
+
+- `docker-compose.yml` runs two containers. `tailscale` joins the tailnet and
+  serves HTTPS ([deploy/tailscale-serve.json](deploy/tailscale-serve.json)).
+  `app` shares its network and listens on `127.0.0.1:8080` with
+  `--no-proxy-headers`, so Tailscale's identity header is trusted exactly as it is
+  with `start-tailscale.sh` (see [Access control](#access-control)).
+- The database lives in the `stock-tracker_app-data` volume and the tailnet
+  identity in `stock-tracker_tailscale-state`. Both survive redeploys.
+- `.github/workflows/deploy.yml` runs `pytest` and the frontend build on a
+  GitHub-hosted runner. If they pass, a **self-hosted runner on the Mac mini**
+  checks out the commit and runs `deploy/deploy.sh`, which rebuilds the image,
+  restarts the containers and waits for `/healthz`. The runner connects out to
+  GitHub, so the Mac mini needs no inbound access.
+- Keys (`TS_AUTHKEY`, `CLAUDE_CODE_OAUTH_TOKEN`) live only on the Mac mini, in
+  `~/.zshrc`. They never go to GitHub. The runner runs as a background service
+  and doesn't load `~/.zshrc`, so `deploy.sh` reads any missing variables from it
+  through an interactive `zsh`. It prints only whether each one is set, has the
+  runner mask the values in the job log, and redacts them from container logs.
+
+### One-time setup
+
+On the **Mac mini**, unless noted.
+
+1. **Keep it on.** System Settings → Energy: turn on *Prevent automatic sleeping
+   when the display is off* and *Start up automatically after a power failure*.
+   Turn on automatic login (Users & Groups → *Automatically log in as*), because
+   Docker Desktop and the runner run in your login session. With FileVault on,
+   automatic login isn't offered; you'd have to log in after every restart.
+2. **Docker Desktop.** Update it to a current version, then turn on *Settings →
+   General → Start Docker Desktop when you sign in to your computer*. Check that
+   `docker compose version` works in Terminal.
+3. **Tailscale.** In the [admin console](https://login.tailscale.com/admin/dns),
+   make sure MagicDNS and *HTTPS Certificates* are on. Then
+   [generate an auth key](https://login.tailscale.com/admin/settings/keys)
+   (one-off, not ephemeral). It's only used for the sidecar's first login.
+4. **Claude token** (any machine where you're signed in to Claude):
+   `claude setup-token`, then copy the `sk-ant-oat01-…` it prints.
+5. **Keys and settings.** Add the `export` lines from
+   [deploy/zshrc.example](deploy/zshrc.example) to `~/.zshrc`, and fill in
+   `TS_AUTHKEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `TZ`, and preferably
+   `TAILSCALE_ALLOWED_LOGINS` (your tailnet login). Then:
+
+   ```bash
+   chmod 600 ~/.zshrc
+   source ~/.zshrc
+   for v in TS_AUTHKEY CLAUDE_CODE_OAUTH_TOKEN; do [ -n "${(P)v}" ] && echo "$v: set" || echo "$v: MISSING"; done
+   ```
+
+   That check prints only whether each key is set. Don't `echo` the keys
+   themselves.
+6. **Self-hosted runner.** On GitHub, open the repo → Settings → Actions → Runners
+   → **New self-hosted runner** → macOS, ARM64 (Apple silicon). Run the
+   *Download* commands it shows in `~/actions-runner`, then configure it with the
+   `macmini` label and install it as a service:
+
+   ```bash
+   cd ~/actions-runner
+   ./config.sh --url https://github.com/cyee02/stock-tracker --token <TOKEN> \
+     --name macmini --labels macmini --unattended
+   ./svc.sh install
+   ./svc.sh start
+   ./svc.sh status
+   ```
+
+   Without `--unattended`, `config.sh` asks for each remaining setting, starting
+   with the *runner group*. Press Enter to accept `Default` (runner groups only
+   matter for organisations), and Enter again for the work folder. The token
+   from the GitHub page is valid for an hour. If a half-finished run says the
+   runner is already configured, clear it with
+   `./config.sh remove --token <TOKEN>` and run `config.sh` again.
+
+   The service gets the `PATH` saved in `~/actions-runner/.path` when you ran
+   `config.sh`. Check that it includes the folder `which docker` prints (usually
+   `/usr/local/bin`). If not, add it, then `./svc.sh stop && ./svc.sh start`.
+   The runner should now show as *Idle* under Settings → Actions → Runners.
+7. **Lock down fork PRs** (the repo is public). Settings → Actions → General →
+   *Approval for running fork pull request workflows* → **Require approval for
+   all external contributors**. Otherwise a stranger's pull request could add a
+   workflow that runs on your Mac mini. The deploy workflow only runs on pushes
+   to `main` and manual runs, never on pull requests. Making the repo private
+   removes the risk entirely.
+8. **First deploy.** Push to `main`, or open Actions → *Test and deploy to Mac
+   mini* → **Run workflow**. When it finishes, the new machine `stock-tracker`
+   appears in the Tailscale admin console. Open its **⋯ menu → Disable key
+   expiry**, so it doesn't drop off the tailnet in 180 days. Then open
+   `https://stock-tracker.<tailnet>.ts.net`.
+
+### Moving existing data over (optional)
+
+To keep the watchlist, saved summaries, share links and alert key from an
+existing `local.db`, stop the old server first (`./scripts/stop-tailscale.sh`,
+which also stops it alerting twice), copy `local.db` to the Mac mini, then:
+
+```bash
+docker compose -p stock-tracker stop app
+docker cp local.db "$(docker compose -p stock-tracker ps -aq app)":/data/app.db
+docker compose -p stock-tracker start app
+```
+
+The address is new, so on each phone re-add the app to the Home Screen and turn
+price alerts on again. Push subscriptions belong to the old address.
+
+### Day to day
+
+- Merging to `main` deploys it. Follow progress in the repo's **Actions** tab.
+  A failing test stops the deploy, and the running version stays up.
+- Deploy by hand on the Mac mini from any checkout: `./deploy/deploy.sh`.
+- Logs: `docker compose -p stock-tracker logs -f app`.
+- Stop: `docker compose -p stock-tracker down`. This keeps the volumes and data.
+  Adding `-v` would delete them.
+
+### Troubleshooting
+
+- **The `app` container exits with code 132 (illegal instruction).** Docker
+  Desktop is too old for the Mac's CPU, and OpenSSL inside the container crashes.
+  Update Docker Desktop.
+- **`docker: command not found` or `error getting credentials` in the deploy
+  job.** The runner service's `PATH` is missing Docker's folder. See step 6.
+- **The deploy job sits at *Waiting for a runner*.** The runner is offline:
+  `cd ~/actions-runner && ./svc.sh status`. It runs only while you're logged in.
+- **The sidecar doesn't come up.** Check `docker compose -p stock-tracker logs
+  tailscale`. Usually the auth key was expired or already used. Put in a new
+  key in `~/.zshrc`, run `docker volume rm stock-tracker_tailscale-state`, then
+  `./deploy/deploy.sh`.
+- **Summaries say "Not logged in".** `CLAUDE_CODE_OAUTH_TOKEN` is missing or
+  expired. Make a new one with `claude setup-token`, put it in `~/.zshrc`, and
+  run `./deploy/deploy.sh`.
 
 ## Deploy to Fly.io
 

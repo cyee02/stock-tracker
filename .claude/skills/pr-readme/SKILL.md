@@ -16,7 +16,7 @@ true. Do this **before** `gh pr create`, not after.
    ```bash
    # symbolic-ref (not rev-parse): rev-parse echoes "origin/HEAD" back when unset.
    BASE=$(git symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')
-   BASE=${BASE:-master}
+   BASE=${BASE:-main}
    git diff --name-status "origin/$BASE"...HEAD
    git status --porcelain
    ```
