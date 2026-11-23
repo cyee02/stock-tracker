@@ -1,0 +1,58 @@
+# __APP__ on the Mac mini: the app plus a Tailscale sidecar that serves it over
+# HTTPS at https://__APP__.<tailnet>.ts.net. Nothing is published on the host.
+#
+# The app shares the sidecar's network namespace and binds 127.0.0.1, so the
+# only way in is `tailscale serve` proxying over loopback (which is also what
+# makes Tailscale-User-Login headers trustworthy, if the app reads them).
+# Don't publish ports or bind the app to 0.0.0.0.
+#
+# Deploy with ./deploy/deploy.sh. Keys come from the shell environment; see
+# deploy/zshrc.example. Don't run `docker compose config` where its output is
+# kept: it prints the resolved keys.
+#
+# (Template from the macmini-deploy skill.)
+name: __APP__
+
+# Machine name on the tailnet = the repo name.
+x-tailnet-name: &tailnet_name __APP__
+
+services:
+  tailscale:
+    image: tailscale/tailscale:stable
+    hostname: *tailnet_name
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:-}
+      TS_HOSTNAME: *tailnet_name
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_SERVE_CONFIG: /config/serve.json
+      TS_USERSPACE: "true"
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+      - ./deploy/tailscale-serve.json:/config/serve.json:ro
+    restart: unless-stopped
+
+  app:
+    build: .
+    image: __APP__:latest
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+    environment:
+      # The app must listen on 127.0.0.1:__PORT__ (tailscale-serve.json proxies there).
+      TZ: ${TZ:-UTC}
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+    volumes:
+      - app-data:/data
+    healthcheck:
+      # Any HTTP answer below 500 counts: the app may refuse requests without a
+      # tailnet identity, which still proves it's up.
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:__PORT__/').then(r => process.exit(r.status < 500 ? 0 : 1), () => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  app-data:
+  tailscale-state:

@@ -1,0 +1,34 @@
+name: Test and deploy to Mac mini
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# One deploy at a time; a newer push waits for the running one instead of
+# killing it halfway through `docker compose up`.
+concurrency:
+  group: deploy-macmini
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Replace with this repo's checks (tests, typecheck, build). Keep it
+      # failing loudly: a failed test job stops the deploy.
+      - name: Check
+        run: echo "TODO: run this repo's tests"
+
+  deploy:
+    needs: test
+    # The repo's self-hosted runner on the Mac mini, registered with the "macmini" label.
+    runs-on: [self-hosted, macOS, macmini]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build, start and wait until healthy
+        run: ./deploy/deploy.sh

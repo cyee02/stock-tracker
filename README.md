@@ -136,9 +136,11 @@ frontend/  React + TypeScript + Vite, Plotly charts; public/ holds the web-app
 scripts/   dev.sh — local setup and run; restart.sh — restart on the current branch;
            start-/restart-/stop-tailscale.sh — serve to your tailnet
 .claude/   Claude Code config: the pr-readme skill and the hook that enforces it;
-           the no-secret-leaks skill and its scanner (scan.py)
+           the no-secret-leaks skill and its scanner (scan.py);
+           the macmini-deploy skill (how to deploy, plus templates for other repos)
 .github/   workflows/deploy.yml — tests, then deploys to the Mac mini on push to main
-deploy/    deploy.sh — build and restart the Docker deployment; zshrc.example;
+deploy/    deploy.sh — build and restart the Docker deployment; import-db.sh —
+           load an existing database into it; zshrc.example;
            tailscale-serve.json — the sidecar's HTTPS → app proxy config
 Dockerfile Single container: builds the frontend, adds the Claude CLI, serves from FastAPI
 docker-compose.yml  The app plus a Tailscale sidecar, for the Mac mini
@@ -235,6 +237,8 @@ Every push to `main` runs the tests on GitHub, then deploys to a Mac mini with
 Docker. The app runs in Docker with a **Tailscale sidecar** container that joins
 your tailnet as its own machine and serves the app at
 `https://stock-tracker.<tailnet>.ts.net`. No port is opened on the Mac mini.
+To use a different machine name, change `x-tailnet-name` at the top of
+`docker-compose.yml`.
 
 How it fits together:
 
@@ -326,18 +330,38 @@ On the **Mac mini**, unless noted.
 
 ### Moving existing data over (optional)
 
-To keep the watchlist, saved summaries, share links and alert key from an
-existing `local.db`, stop the old server first (`./scripts/stop-tailscale.sh`,
-which also stops it alerting twice), copy `local.db` to the Mac mini, then:
+To keep the watchlist, saved summaries, share links and alert history from an
+existing `local.db`:
 
-```bash
-docker compose -p stock-tracker stop app
-docker cp local.db "$(docker compose -p stock-tracker ps -aq app)":/data/app.db
-docker compose -p stock-tracker start app
-```
+1. On the old machine, stop the server (`./scripts/stop-tailscale.sh`) so it
+   doesn't alert twice. Then take a consistent copy, without the old push
+   subscriptions, which belong to the old address:
+
+   ```bash
+   mkdir -p ~/Desktop/stock-tracker-data
+   python3 - <<'PY'
+   import os, sqlite3
+   dst = sqlite3.connect(os.path.expanduser("~/Desktop/stock-tracker-data/app.db"))
+   sqlite3.connect("file:local.db?mode=ro", uri=True).backup(dst)
+   dst.execute("delete from push_subscriptions"); dst.commit(); dst.execute("vacuum")
+   PY
+   ```
+
+2. AirDrop the `stock-tracker-data` folder to the Mac mini. It lands in
+   `~/Downloads`.
+3. After the first successful deploy, on the Mac mini, from any checkout of the
+   repo:
+
+   ```bash
+   ./deploy/import-db.sh ~/Downloads/stock-tracker-data/app.db
+   ```
+
+   It checks the file, backs up the current database to
+   `~/stock-tracker-backups/`, swaps in the new one, and waits until the app is
+   healthy. It prints the command to undo the import.
 
 The address is new, so on each phone re-add the app to the Home Screen and turn
-price alerts on again. Push subscriptions belong to the old address.
+price alerts on again.
 
 ### Day to day
 

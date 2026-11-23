@@ -1,5 +1,5 @@
 # Tailnet deployment: the app plus a Tailscale sidecar that serves it over HTTPS
-# at https://<TS_HOSTNAME>.<tailnet>.ts.net. Nothing is published on the host.
+# at https://<tailnet name below>.<tailnet>.ts.net. Nothing is published on the host.
 #
 # The app shares the sidecar's network namespace and binds 127.0.0.1, so the
 # only way in is `tailscale serve` proxying over loopback. That is the
@@ -12,13 +12,20 @@
 # deploy/zshrc.example. Don't run `docker compose config` where its output is
 # kept: it prints the resolved keys.
 
+name: stock-tracker
+
+# The app's machine name on the tailnet: it is served at
+# https://<this name>.<tailnet>.ts.net. Changing it after the first deploy renames
+# the machine in the Tailscale admin console, and the app's address changes.
+x-tailnet-name: &tailnet_name stock-tracker
+
 services:
   tailscale:
     image: tailscale/tailscale:stable
-    hostname: ${TS_HOSTNAME:-stock-tracker}
+    hostname: *tailnet_name
     environment:
       TS_AUTHKEY: ${TS_AUTHKEY:-}
-      TS_HOSTNAME: ${TS_HOSTNAME:-stock-tracker}
+      TS_HOSTNAME: *tailnet_name
       TS_STATE_DIR: /var/lib/tailscale
       TS_SERVE_CONFIG: /config/serve.json
       TS_USERSPACE: "true"

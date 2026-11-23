@@ -1,21 +1,36 @@
 #!/usr/bin/env bash
-# Build and (re)start the Docker deployment from this checkout, then wait until
-# the app is healthy. Run by the GitHub Actions workflow on the Mac mini, and
-# safe to run by hand there:
+# Build and (re)start this repo's Docker deployment on the Mac mini, then wait
+# until the app is healthy. Run by .github/workflows/deploy.yml on the
+# self-hosted runner, and safe to run by hand there:
 #
 #   ./deploy/deploy.sh
 #
 # Settings and keys come from the environment. Anything not already set is read
 # from ~/.zshrc, because the Actions runner runs as a background service and
-# never loads it. See deploy/zshrc.example for the variables.
+# never loads it. See deploy/zshrc.example.
 #
 # Secret values are never printed: only whether each one is set. Don't add
 # `set -x` here; it would echo them.
+#
+# (Template from the macmini-deploy skill. Only the block below differs per repo.)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# ---- Per-repo settings -------------------------------------------------------
+# Never printed; masked in the Actions log and redacted from container logs.
 SECRETS=(TS_AUTHKEY CLAUDE_CODE_OAUTH_TOKEN ADMIN_KEY)
-SETTINGS=(TS_HOSTNAME TS_EXTRA_ARGS TAILSCALE_ALLOWED_LOGINS TZ CLAUDE_MODEL ALERT_INTERVAL_SECONDS)
+# Printed as set / - only.
+SETTINGS=(TS_EXTRA_ARGS TAILSCALE_ALLOWED_LOGINS TZ CLAUDE_MODEL ALERT_INTERVAL_SECONDS)
+# Host folders the containers bind-mount; created before starting.
+HOST_DIRS=()
+# ------------------------------------------------------------------------------
+
+# The compose project (and volume prefix) is the `name:` in docker-compose.yml.
+PROJECT="$(sed -n 's/^name:[[:space:]]*//p' docker-compose.yml | head -1)"
+if [ -z "$PROJECT" ]; then
+  echo "!! docker-compose.yml needs a top-level 'name:'." >&2
+  exit 1
+fi
 
 # 1. Fill in what the environment lacks from an interactive zsh (which reads
 #    ~/.zshrc). Values come back NUL-separated on fd 3, straight into variables;
@@ -43,7 +58,7 @@ if [ "${GITHUB_ACTIONS:-}" = true ]; then
 fi
 
 # 3. Report presence only.
-echo "==> Settings"
+echo "==> $PROJECT settings"
 for name in "${SECRETS[@]}" "${SETTINGS[@]}"; do
   if [ -n "${!name:-}" ]; then echo "    $name: set"; else echo "    $name: -"; fi
 done
@@ -52,16 +67,16 @@ if ! docker info >/dev/null 2>&1; then
   echo "!! Docker isn't running. Start Docker Desktop (and set it to start at login)." >&2
   exit 1
 fi
-if [ -z "${TS_AUTHKEY:-}" ] && ! docker volume inspect stock-tracker_tailscale-state >/dev/null 2>&1; then
+if [ -z "${TS_AUTHKEY:-}" ] && ! docker volume inspect "${PROJECT}_tailscale-state" >/dev/null 2>&1; then
   echo "!! TS_AUTHKEY isn't set, and the Tailscale sidecar has never logged in." >&2
   echo "   Export it in ~/.zshrc (see deploy/zshrc.example)." >&2
   exit 1
 fi
-if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
-  echo "    (AI summaries will fail without CLAUDE_CODE_OAUTH_TOKEN)"
-fi
+for dir in "${HOST_DIRS[@]+"${HOST_DIRS[@]}"}"; do
+  mkdir -p "$dir"
+done
 
-compose() { docker compose -p stock-tracker "$@"; }
+compose() { docker compose "$@"; }
 
 # Masks the secrets' values (and anything shaped like a Tailscale or Claude
 # key) in output we didn't write, such as container logs.
@@ -103,4 +118,4 @@ compose exec -T tailscale tailscale serve status 2>&1 | redact || true
 echo "==> Removing unused images"
 docker image prune -f >/dev/null
 
-echo "==> Deployed $(git rev-parse --short HEAD)"
+echo "==> Deployed $PROJECT $(git rev-parse --short HEAD)"
