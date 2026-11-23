@@ -17,8 +17,7 @@ export TAILSCALE_ALLOWED_LOGINS="you@example.com"
 # Your time zone; "Latest news" summaries are saved per local day.
 export TZ="Asia/Singapore"
 
-# Optional
-# export TS_HOSTNAME="stock-tracker"   # served at https://<TS_HOSTNAME>.<tailnet>.ts.net
+# Optional (the tailnet machine name is set in docker-compose.yml, not here)
 # export CLAUDE_MODEL="sonnet"
 # export ADMIN_KEY="..."               # lets callers off the tailnet in with ?t=<key> (16+ chars)
 # export ALERT_INTERVAL_SECONDS=300
