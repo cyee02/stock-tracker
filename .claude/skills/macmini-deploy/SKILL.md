@@ -20,7 +20,9 @@ A push to `main` runs `.github/workflows/deploy.yml`:
    `./deploy/deploy.sh`.
 
 `deploy.sh` reads keys from the environment or `~/.zshrc`, runs
-`docker compose up -d --build`, and waits for the `app` healthcheck. Data
+`docker compose up -d --build`, waits for the `app` healthcheck, then waits
+until the sidecar has logged in and is serving. If the sidecar can't log in, the
+deploy fails with the reason and the sidecar's log (keys redacted). Data
 lives in named volumes (`<repo>_app-data`) or host folders, so it survives
 redeploys.
 
@@ -62,15 +64,17 @@ checkout of `main`.
 
 Copy the files in `templates/` (next to this file) and fill in the
 placeholders. `__APP__` is the repo name, which is also the tailnet machine
-name. `__PORT__` is the port the app listens on inside the container.
+name. `__APP_ENV__` is the same name uppercased with `-` as `_` (for
+`TS_AUTHKEY___APP_ENV__`, e.g. `TS_AUTHKEY_MQF_SHORTS`). `__PORT__` is the port
+the app listens on inside the container.
 
 | Template | Goes to | What to change |
 |---|---|---|
-| `docker-compose.yml` | `docker-compose.yml` | `__APP__`, `__PORT__`. Add the app's env vars, and only the ones it needs. Never pass `ANTHROPIC_API_KEY` through by accident. Change the healthcheck command if the image has no `node` (e.g. use `python -c "import urllib.request…"`). Add host bind mounts for big media that isn't in git. |
+| `docker-compose.yml` | `docker-compose.yml` | `__APP__`, `__APP_ENV__`, `__PORT__`. Add the app's env vars, and only the ones it needs. Never pass `ANTHROPIC_API_KEY` through by accident. Change the healthcheck command if the image has no `node` (e.g. use `python -c "import urllib.request…"`). Add host bind mounts for big media that isn't in git. |
 | `tailscale-serve.json` | `deploy/tailscale-serve.json` | `__PORT__` |
-| `deploy.sh` | `deploy/deploy.sh` (`chmod +x`) | Only the *Per-repo settings* block: `SECRETS`, `SETTINGS`, `HOST_DIRS` |
+| `deploy.sh` | `deploy/deploy.sh` (`chmod +x`) | Only the *Per-repo settings* block: `SECRETS`, `SETTINGS`, `HOST_DIRS`. The app's `TS_AUTHKEY_<REPO>` is added automatically from the compose `name:`. |
 | `deploy.yml` | `.github/workflows/deploy.yml` | The `test` job: this repo's real tests, typecheck or build |
-| `zshrc.example` | `deploy/zshrc.example` | Add any app-specific variables |
+| `zshrc.example` | `deploy/zshrc.example` | `__APP_ENV__`; add any app-specific variables |
 
 Then write the `Dockerfile`:
 
@@ -132,11 +136,12 @@ and the shared keys in `~/.zshrc` (from `zshrc.example`). For each new repo:
    Without `--unattended`, `config.sh` asks for a runner group. Press Enter
    for `Default`. The token expires after an hour. Check that
    `~/actions-runner/<repo>/.path` includes Docker's folder (`which docker`).
-2. **Tailscale key.** The first deploy of each app logs its sidecar in with
-   `TS_AUTHKEY`. A one-off key works for one app only, so for several new apps
-   use a *reusable* key with a short expiry, or put in a fresh key before each
-   first deploy. After the first deploy, go to the Tailscale admin console →
-   the new machine → **Disable key expiry**.
+2. **Tailscale key.** Each app has its own key, `TS_AUTHKEY_<REPO>` in
+   `~/.zshrc` (uppercased, `-` as `_`: `TS_AUTHKEY_MQF_SHORTS`). A one-off key
+   logs in one machine only. The first deploy of the app uses it. After that,
+   the sidecar's identity lives in the `<repo>_tailscale-state` volume and the
+   key isn't needed again (`TS_AUTH_ONCE`). After the first deploy, go to the
+   Tailscale admin console → the new machine → **Disable key expiry**.
 3. **Public repos only**: Settings → Actions → General → require approval for
    fork PR workflows from all external contributors. A fork's workflow must
    never reach the self-hosted runner.
@@ -147,8 +152,10 @@ and the shared keys in `~/.zshrc` (from `zshrc.example`). For each new repo:
 |---|---|
 | `deploy` queued for a long time | That repo's runner is offline: `cd ~/actions-runner/<repo> && ./svc.sh status`. It only runs while the user is logged in. |
 | `docker: command not found`, `error getting credentials` | The runner's `.path` is missing Docker's folder. Fix it, then `./svc.sh stop && ./svc.sh start`. |
-| Every setting shows `-` | The keys aren't in `~/.zshrc`, or `~/.zshrc` returns early. Check presence only: `env -i HOME="$HOME" PATH=/usr/bin:/bin zsh -ic 'for v in TS_AUTHKEY CLAUDE_CODE_OAUTH_TOKEN; do [ -n "${(P)v}" ] && echo "$v: set" \|\| echo "$v: MISSING"; done' 2>/dev/null` |
-| Sidecar never comes up | The auth key was expired or already used. Put in a new key, run `docker volume rm <repo>_tailscale-state`, and redeploy. |
+| Every setting shows `-` | The keys aren't in `~/.zshrc`, or `~/.zshrc` returns early. Check presence only: `env -i HOME="$HOME" PATH=/usr/bin:/bin zsh -ic 'for v in TS_AUTHKEY_<REPO> CLAUDE_CODE_OAUTH_TOKEN; do [ -n "${(P)v}" ] && echo "$v: set" \|\| echo "$v: MISSING"; done' 2>/dev/null` |
+| "The Tailscale sidecar isn't serving" (state `NeedsLogin` or not running) | `TS_AUTHKEY_<REPO>` was missing, expired or already used. Put in a new key, run `docker volume rm <repo>_tailscale-state`, and redeploy. |
+| Same, state `NeedsMachineAuth` | The tailnet requires device approval: approve the `<repo>` machine in the admin console. |
+| Same, state `Running` | It's logged in but not serving: turn on HTTPS Certificates (admin console → DNS). |
 | App container exits with 132 | Docker Desktop is too old for the CPU. Update it. |
 | App unhealthy | `docker compose -p <repo> logs --tail 80 app`. If you show these logs, pipe them through the redaction in `deploy.sh`. |
 

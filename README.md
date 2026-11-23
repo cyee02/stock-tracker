@@ -253,9 +253,11 @@ How it fits together:
 - `.github/workflows/deploy.yml` runs `pytest` and the frontend build on a
   GitHub-hosted runner. If they pass, a **self-hosted runner on the Mac mini**
   checks out the commit and runs `deploy/deploy.sh`, which rebuilds the image,
-  restarts the containers and waits for `/healthz`. The runner connects out to
+  restarts the containers, waits for `/healthz`, and then waits until the
+  Tailscale sidecar has logged in and is serving. Otherwise the deploy fails with
+  the reason. The runner connects out to
   GitHub, so the Mac mini needs no inbound access.
-- Keys (`TS_AUTHKEY`, `CLAUDE_CODE_OAUTH_TOKEN`) live only on the Mac mini, in
+- Keys (`TS_AUTHKEY_STOCK_TRACKER`, `CLAUDE_CODE_OAUTH_TOKEN`) live only on the Mac mini, in
   `~/.zshrc`. They never go to GitHub. The runner runs as a background service
   and doesn't load `~/.zshrc`, so `deploy.sh` reads any missing variables from it
   through an interactive `zsh`. It prints only whether each one is set, has the
@@ -276,18 +278,20 @@ On the **Mac mini**, unless noted.
 3. **Tailscale.** In the [admin console](https://login.tailscale.com/admin/dns),
    make sure MagicDNS and *HTTPS Certificates* are on. Then
    [generate an auth key](https://login.tailscale.com/admin/settings/keys)
-   (one-off, not ephemeral). It's only used for the sidecar's first login.
+   (one-off, not ephemeral) for this app alone: it goes in
+   `TS_AUTHKEY_STOCK_TRACKER`, and each app on the Mac mini has its own. It's
+   only used for the sidecar's first login.
 4. **Claude token** (any machine where you're signed in to Claude):
    `claude setup-token`, then copy the `sk-ant-oat01-…` it prints.
 5. **Keys and settings.** Add the `export` lines from
    [deploy/zshrc.example](deploy/zshrc.example) to `~/.zshrc`, and fill in
-   `TS_AUTHKEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `TZ`, and preferably
+   `TS_AUTHKEY_STOCK_TRACKER`, `CLAUDE_CODE_OAUTH_TOKEN`, `TZ`, and preferably
    `TAILSCALE_ALLOWED_LOGINS` (your tailnet login). Then:
 
    ```bash
    chmod 600 ~/.zshrc
    source ~/.zshrc
-   for v in TS_AUTHKEY CLAUDE_CODE_OAUTH_TOKEN; do [ -n "${(P)v}" ] && echo "$v: set" || echo "$v: MISSING"; done
+   for v in TS_AUTHKEY_STOCK_TRACKER CLAUDE_CODE_OAUTH_TOKEN; do [ -n "${(P)v}" ] && echo "$v: set" || echo "$v: MISSING"; done
    ```
 
    That check prints only whether each key is set. Don't `echo` the keys
@@ -382,8 +386,9 @@ price alerts on again.
   job.** The runner service's `PATH` is missing Docker's folder. See step 6.
 - **The deploy job sits at *Waiting for a runner*.** The runner is offline:
   `cd ~/actions-runner && ./svc.sh status`. It runs only while you're logged in.
-- **The sidecar doesn't come up.** Check `docker compose -p stock-tracker logs
-  tailscale`. Usually the auth key was expired or already used. Put in a new
+- **"The Tailscale sidecar isn't serving the app".** The deploy prints the
+  sidecar's state, the likely fix and its log (keys redacted). Usually
+  `TS_AUTHKEY_STOCK_TRACKER` was missing, expired or already used. Put in a new
   key in `~/.zshrc`, run `docker volume rm stock-tracker_tailscale-state`, then
   `./deploy/deploy.sh`.
 - **Summaries say "Not logged in".** `CLAUDE_CODE_OAUTH_TOKEN` is missing or

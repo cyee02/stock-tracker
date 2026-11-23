@@ -2,10 +2,11 @@
 # deploy/deploy.sh reads them from your environment, or from ~/.zshrc when the
 # GitHub Actions runner calls it. They never go to GitHub.
 
-# Tailscale auth key, needed only for the first start (the node's identity is
-# then kept in the tailscale-state volume). Create one at
+# This app's Tailscale auth key (each app has its own: TS_AUTHKEY_<REPO>).
+# Needed only for the first start; the sidecar's identity is then kept in the
+# stock-tracker_tailscale-state volume. Create one at
 # https://login.tailscale.com/admin/settings/keys
-export TS_AUTHKEY="tskey-auth-REPLACE_ME"
+export TS_AUTHKEY_STOCK_TRACKER="tskey-auth-REPLACE_ME"
 
 # Long-lived Claude token for the AI summaries: run `claude setup-token` on any
 # machine where you can sign in to Claude, and paste the sk-ant-oat01-... value.

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Build and (re)start this repo's Docker deployment on the Mac mini, then wait
-# until the app is healthy. Run by .github/workflows/deploy.yml on the
-# self-hosted runner, and safe to run by hand there:
+# until the app is healthy and the Tailscale sidecar is serving it. Run by
+# .github/workflows/deploy.yml on the self-hosted runner, and safe to run by
+# hand there:
 #
 #   ./deploy/deploy.sh
 #
@@ -18,7 +19,8 @@ cd "$(dirname "$0")/.."
 
 # ---- Per-repo settings -------------------------------------------------------
 # Never printed; masked in the Actions log and redacted from container logs.
-SECRETS=(TS_AUTHKEY CLAUDE_CODE_OAUTH_TOKEN)
+# (This app's Tailscale auth key, TS_AUTHKEY_<REPO>, is added automatically.)
+SECRETS=(CLAUDE_CODE_OAUTH_TOKEN)
 # Printed as set / - only.
 SETTINGS=(TAILSCALE_ALLOWED_LOGINS TZ)
 # Host folders the containers bind-mount; created before starting.
@@ -31,6 +33,11 @@ if [ -z "$PROJECT" ]; then
   echo "!! docker-compose.yml needs a top-level 'name:'." >&2
   exit 1
 fi
+# Each app's sidecar logs in with its own key: TS_AUTHKEY_<PROJECT>, uppercased
+# with - as _ (e.g. TS_AUTHKEY_MQF_SHORTS). docker-compose.yml hands it to the
+# sidecar as TS_AUTHKEY.
+TS_KEY_NAME="TS_AUTHKEY_$(printf '%s' "$PROJECT" | tr '[:lower:]-' '[:upper:]_')"
+SECRETS=("$TS_KEY_NAME" "${SECRETS[@]+"${SECRETS[@]}"}")
 
 # 1. Fill in what the environment lacks from an interactive zsh (which reads
 #    ~/.zshrc). Values come back NUL-separated on fd 3, straight into variables;
@@ -67,8 +74,8 @@ if ! docker info >/dev/null 2>&1; then
   echo "!! Docker isn't running. Start Docker Desktop (and set it to start at login)." >&2
   exit 1
 fi
-if [ -z "${TS_AUTHKEY:-}" ] && ! docker volume inspect "${PROJECT}_tailscale-state" >/dev/null 2>&1; then
-  echo "!! TS_AUTHKEY isn't set, and the Tailscale sidecar has never logged in." >&2
+if [ -z "${!TS_KEY_NAME:-}" ] && ! docker volume inspect "${PROJECT}_tailscale-state" >/dev/null 2>&1; then
+  echo "!! $TS_KEY_NAME isn't set, and the Tailscale sidecar has never logged in." >&2
   echo "   Export it in ~/.zshrc (see deploy/zshrc.example)." >&2
   exit 1
 fi
@@ -106,14 +113,42 @@ for i in $(seq 1 36); do
   fi
   if [ "$i" = 36 ]; then
     echo "!! App is '$status' after 3 minutes. Recent logs:" >&2
-    compose logs --tail 80 2>&1 | redact >&2
+    compose logs --tail 80 app 2>&1 | redact >&2
     exit 1
   fi
   sleep 5
 done
 
-echo "==> Tailnet endpoint"
-compose exec -T tailscale tailscale serve status 2>&1 | redact || true
+# A healthy app isn't enough: nobody can reach it until the sidecar has logged
+# in to the tailnet and applied deploy/tailscale-serve.json.
+echo "==> Waiting for the Tailscale sidecar to log in and serve"
+ts_status() { compose exec -T tailscale tailscale status --json --peers=false 2>/dev/null || true; }
+state=""
+for i in $(seq 1 24); do
+  state="$(ts_status | sed -n '/"BackendState"/{s/.*"BackendState": *"\([A-Za-z]*\)".*/\1/p;q;}')"
+  if [ "$state" = Running ] && compose exec -T tailscale tailscale serve status 2>/dev/null | grep -q 'proxy http'; then
+    break
+  fi
+  if [ "$i" = 24 ]; then
+    echo "!! The Tailscale sidecar isn't serving the app after 2 minutes (state: ${state:-not running})." >&2
+    case "$state" in
+      NeedsLogin|"")
+        echo "   It couldn't log in: $TS_KEY_NAME is missing, expired or already used." >&2
+        echo "   Put a new key in ~/.zshrc, then run:" >&2
+        echo "   docker volume rm ${PROJECT}_tailscale-state && ./deploy/deploy.sh" >&2 ;;
+      NeedsMachineAuth)
+        echo "   It's waiting for approval: approve the '$PROJECT' machine in the Tailscale admin console." >&2 ;;
+      Running)
+        echo "   It's logged in but not serving: turn on HTTPS Certificates in the Tailscale admin console (DNS)." >&2 ;;
+    esac
+    echo "   Sidecar errors (full log: docker compose -p $PROJECT logs tailscale):" >&2
+    compose logs --no-log-prefix tailscale 2>&1 | redact | grep -iE 'error|invalid|denied|expired|failed' | tail -6 >&2 || true
+    exit 1
+  fi
+  sleep 5
+done
+dns="$(ts_status | sed -n '/"DNSName"/{s/.*"DNSName": *"\([^"]*\)".*/\1/p;q;}')"
+echo "    Serving https://${dns%.}"
 
 echo "==> Removing unused images"
 docker image prune -f >/dev/null
