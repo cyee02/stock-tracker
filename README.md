@@ -149,8 +149,9 @@ fly.toml   Fly.io deployment config
 
 Before opening a pull request, README.md gets updated to match the branch. A
 PreToolUse hook (`.claude/hooks/pr-readme-guard.sh`) stops `gh pr create` when
-the branch has no README change; prefix the command with `PR_README_OK=1` when
-no change is genuinely needed.
+the branch has no README change. It checks the repo the command runs in: the
+directory a leading `cd <dir> &&` moves to (another repo or a worktree), else this
+one. Prefix the command with `PR_README_OK=1` when no change is genuinely needed.
 
 ## Local development
 
